@@ -21,21 +21,21 @@ import java.io.IOException;
 import java.util.*;
 
 import com.google.common.collect.AbstractIterator;
-import com.google.common.collect.Ordering;
 import com.google.common.util.concurrent.RateLimiter;
 
 import org.apache.cassandra.db.DataRange;
 import org.apache.cassandra.db.DecoratedKey;
-import org.apache.cassandra.db.RowIndexEntry;
+import org.apache.cassandra.db.IndexedEntry;
 import org.apache.cassandra.db.RowPosition;
 import org.apache.cassandra.db.columniterator.IColumnIteratorFactory;
 import org.apache.cassandra.db.columniterator.LazyColumnIterator;
 import org.apache.cassandra.db.columniterator.OnDiskAtomIterator;
+import org.apache.cassandra.db.index.birch.PageAlignedReader;
 import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.dht.AbstractBounds.Boundary;
-import org.apache.cassandra.dht.Bounds;
 import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
+import org.apache.cassandra.io.util.FileDataInput;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -48,7 +48,7 @@ import static org.apache.cassandra.dht.AbstractBounds.minRight;
 public class SSTableScanner implements ISSTableScanner
 {
     protected final RandomAccessReader dfile;
-    protected final RandomAccessReader ifile;
+    private final FileDataInput ifile;
     public final SSTableReader sstable;
 
     private final Iterator<AbstractBounds<RowPosition>> rangeIterator;
@@ -155,10 +155,12 @@ public class SSTableScanner implements ISSTableScanner
     private void seekToCurrentRangeStart()
     {
         long indexPosition = sstable.getIndexScanPosition(currentRange.left);
-        ifile.seek(indexPosition);
         try
         {
+            if (ifile instanceof PageAlignedReader)
+                ((PageAlignedReader) ifile).findAndSetSegmentAndSubSegmentCurrentForPosition(indexPosition);
 
+            ifile.seek(indexPosition);
             while (!ifile.isEOF())
             {
                 indexPosition = ifile.getFilePointer();
@@ -166,14 +168,19 @@ public class SSTableScanner implements ISSTableScanner
                 if (indexDecoratedKey.compareTo(currentRange.left) > 0 || currentRange.contains(indexDecoratedKey))
                 {
                     // Found, just read the dataPosition and seek into index and data files
+                    ifile.readBoolean();
                     long dataPosition = ifile.readLong();
+
+                    if (ifile instanceof PageAlignedReader)
+                        ((PageAlignedReader) ifile).findAndSetSegmentAndSubSegmentCurrentForPosition(indexPosition);
+
                     ifile.seek(indexPosition);
                     dfile.seek(dataPosition);
                     break;
                 }
                 else
                 {
-                    RowIndexEntry.Serializer.skip(ifile);
+                    IndexedEntry.Serializer.skip(ifile, sstable.descriptor.version);
                 }
             }
         }
@@ -215,7 +222,7 @@ public class SSTableScanner implements ISSTableScanner
     {
         if (iterator == null)
             iterator = createIterator();
-        return iterator.next();
+        return iterator.hasNext() ? iterator.next() : null;
     }
 
     public void remove()
@@ -231,14 +238,19 @@ public class SSTableScanner implements ISSTableScanner
     protected class KeyScanningIterator extends AbstractIterator<OnDiskAtomIterator>
     {
         private DecoratedKey nextKey;
-        private RowIndexEntry nextEntry;
+        private IndexedEntry nextEntry;
         private DecoratedKey currentKey;
-        private RowIndexEntry currentEntry;
-
+        private IndexedEntry currentEntry;
+        private long lastDeserialziedPos;
+        
         protected OnDiskAtomIterator computeNext()
         {
             try
             {
+                // Check and seek() required for backwards compatablity with legacy index format
+                if (ifile instanceof RandomAccessReader && lastDeserialziedPos > 0)
+                    ifile.seek(lastDeserialziedPos);
+
                 if (nextEntry == null)
                 {
                     do
@@ -251,10 +263,14 @@ public class SSTableScanner implements ISSTableScanner
                         seekToCurrentRangeStart();
 
                         if (ifile.isEOF())
+                        {
                             return endOfData();
+                        }
 
                         currentKey = sstable.partitioner.decorateKey(ByteBufferUtil.readWithShortLength(ifile));
                         currentEntry = sstable.metadata.comparator.rowIndexEntrySerializer().deserialize(ifile, sstable.descriptor.version);
+
+                        lastDeserialziedPos = (ifile instanceof RandomAccessReader) ? ifile.getFilePointer() : ((PageAlignedReader)ifile).getOffset();
                     } while (!currentRange.contains(currentKey));
                 }
                 else
@@ -273,12 +289,24 @@ public class SSTableScanner implements ISSTableScanner
                 }
                 else
                 {
-                    // we need the position of the start of the next key, regardless of whether it falls in the current range
-                    nextKey = sstable.partitioner.decorateKey(ByteBufferUtil.readWithShortLength(ifile));
-                    nextEntry = sstable.metadata.comparator.rowIndexEntrySerializer().deserialize(ifile, sstable.descriptor.version);
-                    readEnd = nextEntry.position;
+                    if (ifile instanceof PageAlignedReader && ifile.isCurrentSegmentExausted())
+                        ((PageAlignedReader)ifile).nextSegment();
 
-                    if (!currentRange.contains(nextKey))
+                    if (ifile instanceof PageAlignedReader && !((PageAlignedReader)ifile).getCurrentSubSegment().shouldUseSingleMmappedBuffer())
+                    {
+                        lastDeserialziedPos = ((PageAlignedReader)ifile).getOffset();
+                        readEnd = currentEntry.getPosition();
+                    }
+                    else
+                    {
+                        // we need the position of the start of the next key, regardless of whether it falls in the current range
+                        nextKey = sstable.partitioner.decorateKey(ByteBufferUtil.readWithShortLength(ifile));
+                        nextEntry = sstable.metadata.comparator.rowIndexEntrySerializer().deserialize(ifile, sstable.descriptor.version);
+                        lastDeserialziedPos = (ifile instanceof PageAlignedReader) ? ((PageAlignedReader)ifile).getOffset() : ifile.getFilePointer();
+                        readEnd = nextEntry.getPosition();
+                    }
+
+                    if (nextKey != null && !currentRange.contains(nextKey))
                     {
                         nextKey = null;
                         nextEntry = null;
@@ -287,7 +315,7 @@ public class SSTableScanner implements ISSTableScanner
 
                 if (dataRange == null || dataRange.selectsFullRowFor(currentKey.getKey()))
                 {
-                    dfile.seek(currentEntry.position);
+                    dfile.seek(currentEntry.getPosition());
                     ByteBufferUtil.readWithShortLength(dfile); // key
                     long dataSize = readEnd - dfile.getFilePointer();
                     return new SSTableIdentityIterator(sstable, dfile, currentKey, dataSize);

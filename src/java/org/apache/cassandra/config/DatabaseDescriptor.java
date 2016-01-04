@@ -77,6 +77,8 @@ import org.apache.cassandra.utils.memory.NativePool;
 import org.apache.cassandra.utils.memory.MemtablePool;
 import org.apache.cassandra.utils.memory.SlabPool;
 
+import static org.apache.cassandra.config.Config.DiskAccessMode.mmap_cache_aligned;
+
 public class DatabaseDescriptor
 {
     private static final Logger logger = LoggerFactory.getLogger(DatabaseDescriptor.class);
@@ -339,13 +341,13 @@ public class DatabaseDescriptor
             if (conf.disk_access_mode == Config.DiskAccessMode.auto)
             {
                 conf.disk_access_mode = hasLargeAddressSpace() ? Config.DiskAccessMode.mmap : Config.DiskAccessMode.standard;
-                indexAccessMode = conf.disk_access_mode;
+                indexAccessMode = mmap_cache_aligned;
                 logger.info("DiskAccessMode 'auto' determined to be {}, indexAccessMode is {}", conf.disk_access_mode, indexAccessMode);
             }
             else if (conf.disk_access_mode == Config.DiskAccessMode.mmap_index_only)
             {
                 conf.disk_access_mode = Config.DiskAccessMode.standard;
-                indexAccessMode = Config.DiskAccessMode.mmap;
+                indexAccessMode = mmap_cache_aligned;
                 logger.info("DiskAccessMode is {}, indexAccessMode is {}", conf.disk_access_mode, indexAccessMode);
             }
             else

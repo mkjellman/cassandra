@@ -18,6 +18,7 @@
 package org.apache.cassandra.io.sstable;
 
 import java.lang.ref.WeakReference;
+import java.io.IOException;
 import java.util.*;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -30,7 +31,7 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.DataTracker;
 import org.apache.cassandra.db.DecoratedKey;
-import org.apache.cassandra.db.RowIndexEntry;
+import org.apache.cassandra.db.IndexedEntry;
 import org.apache.cassandra.db.compaction.AbstractCompactedRow;
 import org.apache.cassandra.utils.CLibrary;
 
@@ -73,7 +74,7 @@ public class SSTableRewriter
     private final boolean isOffline; // true for operations that are performed without Cassandra running (prevents updates of DataTracker)
 
     private SSTableWriter writer;
-    private Map<DecoratedKey, RowIndexEntry> cachedKeys = new HashMap<>();
+    private Map<DecoratedKey, IndexedEntry> cachedKeys = new HashMap<>();
     private State state = State.WORKING;
 
     private static enum State
@@ -120,11 +121,11 @@ public class SSTableRewriter
         return writer;
     }
 
-    public RowIndexEntry append(AbstractCompactedRow row)
+    public IndexedEntry append(AbstractCompactedRow row)
     {
         // we do this before appending to ensure we can resetAndTruncate() safely if the append fails
         maybeReopenEarly(row.key);
-        RowIndexEntry index = writer.append(row);
+        IndexedEntry index = writer.append(row);
         if (!isOffline)
         {
             if (index == null)
@@ -150,12 +151,17 @@ public class SSTableRewriter
     }
 
     // attempts to append the row, if fails resets the writer position
-    public RowIndexEntry tryAppend(AbstractCompactedRow row)
+    public IndexedEntry tryAppend(AbstractCompactedRow row)
     {
-        writer.mark();
+
         try
         {
+            writer.mark();
             return append(row);
+        }
+        catch (IOException e)
+        {
+            throw new RuntimeException(e);
         }
         catch (Throwable t)
         {
@@ -172,8 +178,8 @@ public class SSTableRewriter
             {
                 for (SSTableReader reader : rewriting)
                 {
-                    RowIndexEntry index = reader.getPosition(key, SSTableReader.Operator.GE);
-                    CLibrary.trySkipCache(fileDescriptors.get(reader.descriptor), 0, index == null ? 0 : index.position);
+                    IndexedEntry index = reader.getPosition(key, SSTableReader.Operator.GE);
+                    CLibrary.trySkipCache(fileDescriptors.get(reader.descriptor), 0, index == null ? 0 : index.getPosition());
                 }
             }
             else
@@ -292,7 +298,7 @@ public class SSTableRewriter
         {
             newReader.setupKeyCache();
             invalidateKeys.addAll(cachedKeys.keySet());
-            for (Map.Entry<DecoratedKey, RowIndexEntry> cacheKey : cachedKeys.entrySet())
+            for (Map.Entry<DecoratedKey, IndexedEntry> cacheKey : cachedKeys.entrySet())
                 newReader.cacheKey(cacheKey.getKey(), cacheKey.getValue());
         }
 

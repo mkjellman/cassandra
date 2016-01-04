@@ -318,6 +318,7 @@ public class Config
         mmap,
         mmap_index_only,
         standard,
+        mmap_cache_aligned,
     }
 
     public static enum MemtableAllocationType

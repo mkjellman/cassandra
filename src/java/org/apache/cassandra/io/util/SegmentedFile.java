@@ -23,13 +23,13 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.MappedByteBuffer;
 import java.util.Iterator;
-import java.util.List;
 import java.util.NoSuchElementException;
 
 import com.google.common.util.concurrent.RateLimiter;
 
 import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.db.index.birch.PageAlignedReader;
 import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.compress.CompressedSequentialWriter;
 import org.apache.cassandra.utils.CLibrary;
@@ -52,7 +52,7 @@ public abstract class SegmentedFile extends SharedCloseableImpl
     public final long length;
 
     // This differs from length for compressed files (but we still need length for
-    // SegmentIterator because offsets in the file are relative to the uncompressed size)
+    // LegacySegmentIterator because offsets in the file are relative to the uncompressed size)
     public final long onDiskLength;
 
     /**
@@ -123,9 +123,9 @@ public abstract class SegmentedFile extends SharedCloseableImpl
      */
     public static Builder getBuilder(Config.DiskAccessMode mode)
     {
-        return mode == Config.DiskAccessMode.mmap
-               ? new MmappedSegmentedFile.Builder()
-               : new BufferedPoolingSegmentedFile.Builder();
+        return mode == Config.DiskAccessMode.mmap_cache_aligned
+            ? new PageAlignedAwareSegmentedFile.Builder()
+            : new BufferedPoolingSegmentedFile.Builder();
     }
 
     public static Builder getCompressedBuilder()
@@ -141,7 +141,12 @@ public abstract class SegmentedFile extends SharedCloseableImpl
     /**
      * @return An Iterator over segments, beginning with the segment containing the given position: each segment must be closed after use.
      */
-    public Iterator<FileDataInput> iterator(long position)
+    public Iterator<FileDataInput> legacyIndexIterator(long position)
+    {
+        return new LegacySegmentIterator(position);
+    }
+
+    public Iterator<FileDataInput> indexIterator(long position)
     {
         return new SegmentIterator(position);
     }
@@ -208,10 +213,10 @@ public abstract class SegmentedFile extends SharedCloseableImpl
      * A lazy Iterator over segments in forward order from the given position.  It is caller's responsibility
      * to close the FileDataIntputs when finished.
      */
-    final class SegmentIterator implements Iterator<FileDataInput>
+    public final class LegacySegmentIterator implements Iterator<FileDataInput>
     {
         private long nextpos;
-        public SegmentIterator(long position)
+        public LegacySegmentIterator(long position)
         {
             this.nextpos = position;
         }
@@ -240,6 +245,66 @@ public abstract class SegmentedFile extends SharedCloseableImpl
         }
 
         public void remove() { throw new UnsupportedOperationException(); }
+    }
+
+    public final class SegmentIterator implements Iterator<FileDataInput>
+    {
+        private final PageAlignedReader reader;
+        private final long position;
+        private int nextSegmentIdx;
+
+        public SegmentIterator(long position)
+        {
+            this.position = position;
+            try
+            {
+                this.reader = new PageAlignedReader(new File(path));
+
+                // todo: kj we don't want to call this twice..
+                int startingSegmentIdx = reader.getSegmentForOffset(position);
+                reader.setSegment(startingSegmentIdx);
+                this.nextSegmentIdx = -1;
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        public boolean hasNext()
+        {
+            return nextSegmentIdx < 0 || reader.hasNextSegment();
+        }
+
+        public FileDataInput next()
+        {
+            if (nextSegmentIdx >= reader.getSegments().size())
+                throw new NoSuchElementException();
+
+            try
+            {
+                if (nextSegmentIdx < 0)
+                {
+                    int startingSegmentIdx = reader.getSegmentForOffset(position);
+                    reader.setSegment(startingSegmentIdx);
+                    nextSegmentIdx = startingSegmentIdx + 1;
+                }
+                else
+                {
+                    reader.setSegment(nextSegmentIdx++);
+                }
+            }
+            catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+
+            return reader;
+        }
+
+        public void remove() { throw new UnsupportedOperationException(); }
+
+        public void close()
+        {
+            FileUtils.closeQuietly(reader); // todo kjkj
+        }
     }
 
     @Override

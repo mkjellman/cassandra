@@ -26,7 +26,6 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Predicate;
-import com.google.common.collect.Iterables;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Ordering;
 import com.google.common.primitives.Longs;
@@ -48,23 +47,25 @@ import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
+import org.apache.cassandra.db.BirchIndexedEntry;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.DataRange;
 import org.apache.cassandra.db.DataTracker;
 import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.IndexedEntry;
 import org.apache.cassandra.db.Keyspace;
-import org.apache.cassandra.db.RowIndexEntry;
 import org.apache.cassandra.db.RowPosition;
 import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.commitlog.ReplayPosition;
 import org.apache.cassandra.db.index.SecondaryIndex;
+import org.apache.cassandra.db.index.birch.AlignedSegment;
+import org.apache.cassandra.db.index.birch.PageAlignedReader;
 import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.LocalPartitioner;
 import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.io.FSError;
-import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.compress.CompressionMetadata;
 import org.apache.cassandra.io.sstable.metadata.CompactionMetadata;
 import org.apache.cassandra.io.sstable.metadata.MetadataComponent;
@@ -211,7 +212,7 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
     private IndexSummary indexSummary;
     private IFilter bf;
 
-    private InstrumentingCache<KeyCacheKey, RowIndexEntry> keyCache;
+    private InstrumentingCache<KeyCacheKey, IndexedEntry> keyCache;
 
     private final BloomFilterTracker bloomFilterTracker = new BloomFilterTracker();
 
@@ -744,7 +745,9 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
             }
 
             if (components.contains(Component.PRIMARY_INDEX))
+            {
                 ifile = ibuilder.complete(descriptor.filenameFor(Component.PRIMARY_INDEX));
+            }
 
             dfile = dbuilder.complete(descriptor.filenameFor(Component.DATA));
 
@@ -810,12 +813,12 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
          if (!components.contains(Component.PRIMARY_INDEX))
              return;
 
-        // we read the positions in a BRAF so we don't have to worry about an entry spanning a mmap boundary.
-        RandomAccessReader primaryIndex = RandomAccessReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
+        FileDataInput primaryIndex = (descriptor.version.hasBirchIndexes)
+                                     ? new PageAlignedReader(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)))
+                                     : RandomAccessReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
 
         try
         {
-            long indexSize = primaryIndex.length();
             long histogramCount = sstableMetadata.estimatedRowSize.count();
             long estimatedKeys = histogramCount > 0 && !sstableMetadata.estimatedRowSize.isOverflowed()
                                  ? histogramCount
@@ -827,25 +830,54 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
                 if (recreateBloomFilter)
                     bf = FilterFactory.getFilter(estimatedKeys, metadata.getBloomFilterFpChance(), true);
 
-                long indexPosition;
-                while ((indexPosition = primaryIndex.getFilePointer()) != indexSize)
+                if (descriptor.version.hasBirchIndexes)
                 {
-                    ByteBuffer key = ByteBufferUtil.readWithShortLength(primaryIndex);
-                    RowIndexEntry indexEntry = metadata.comparator.rowIndexEntrySerializer().deserialize(primaryIndex, descriptor.version);
-                    DecoratedKey decoratedKey = partitioner.decorateKey(key);
-                    if (first == null)
-                        first = decoratedKey;
-                    last = decoratedKey;
-
-                    if (recreateBloomFilter)
-                        bf.add(decoratedKey.getKey());
-
-                    // if summary was already read from disk we don't want to re-populate it using primary index
-                    if (!summaryLoaded)
+                    for (AlignedSegment segment : ((PageAlignedReader) primaryIndex).getSegments())
                     {
-                        summaryBuilder.maybeAddEntry(decoratedKey, indexPosition);
-                        ibuilder.addPotentialBoundary(indexPosition);
-                        dbuilder.addPotentialBoundary(indexEntry.position);
+                        ((PageAlignedReader) primaryIndex).setSegment(segment.idx);
+
+                        ByteBuffer key = ByteBufferUtil.readWithShortLength(primaryIndex);
+                        IndexedEntry indexEntry = metadata.comparator.rowIndexEntrySerializer().deserialize(primaryIndex, descriptor.version);
+                        DecoratedKey decoratedKey = partitioner.decorateKey(key);
+                        if (first == null)
+                            first = decoratedKey;
+                        last = decoratedKey;
+
+                        if (recreateBloomFilter)
+                            bf.add(decoratedKey.getKey());
+
+                        // if summary was already read from disk we don't want to re-populate it using primary index
+                        if (!summaryLoaded)
+                        {
+                            summaryBuilder.maybeAddEntry(decoratedKey, segment.offset);
+                            ibuilder.addPotentialBoundary(segment.offset);
+                            dbuilder.addPotentialBoundary(indexEntry.getPosition());
+                        }
+                    }
+                }
+                else
+                {
+                    long indexSize = ((RandomAccessReader) primaryIndex).length();
+                    long indexPosition;
+                    while ((indexPosition = primaryIndex.getFilePointer()) != indexSize)
+                    {
+                        ByteBuffer key = ByteBufferUtil.readWithShortLength(primaryIndex);
+                        IndexedEntry indexEntry = metadata.comparator.rowIndexEntrySerializer().deserialize(primaryIndex, descriptor.version);
+                        DecoratedKey decoratedKey = partitioner.decorateKey(key);
+                        if (first == null)
+                            first = decoratedKey;
+                        last = decoratedKey;
+
+                        if (recreateBloomFilter)
+                            bf.add(decoratedKey.getKey());
+
+                        // if summary was already read from disk we don't want to re-populate it using primary index
+                        if (!summaryLoaded)
+                        {
+                            summaryBuilder.maybeAddEntry(decoratedKey, indexPosition);
+                            ibuilder.addPotentialBoundary(indexPosition);
+                            dbuilder.addPotentialBoundary(indexEntry.getPosition());
+                        }
                     }
                 }
 
@@ -936,7 +968,9 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
         if (ifile == null)
             return false;
 
-        Iterator<FileDataInput> segments = ifile.iterator(0);
+        Iterator<FileDataInput> segments = (descriptor.version.hasBirchIndexes)
+                                           ? ifile.indexIterator(0)
+                                           : ifile.legacyIndexIterator(0);
         int i = 0;
         int summaryEntriesChecked = 0;
         int expectedIndexInterval = getMinIndexInterval();
@@ -958,7 +992,7 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
                         if (summaryEntriesChecked == Downsampling.BASE_SAMPLING_LEVEL)
                             return true;
                     }
-                    RowIndexEntry.Serializer.skip(in);
+                    IndexedEntry.Serializer.skip(in, descriptor.version);
                     i++;
                 }
             }
@@ -1087,7 +1121,7 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
             // TODO: merge with caller's firstKeyBeyond() work,to save time
             if (newStart.compareTo(first) > 0)
             {
-                final long dataStart = getPosition(newStart, Operator.EQ).position;
+                final long dataStart = getPosition(newStart, Operator.EQ).getPosition();
                 final long indexStart = getIndexScanPosition(newStart);
                 this.tidy.runOnClose = new DropPageCache(dfile, dataStart, ifile, indexStart, runOnClose);
             }
@@ -1192,26 +1226,50 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
 
     private IndexSummary buildSummaryAtLevel(int newSamplingLevel) throws IOException
     {
-        // we read the positions in a BRAF so we don't have to worry about an entry spanning a mmap boundary.
-        RandomAccessReader primaryIndex = RandomAccessReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
-        try
+        if (descriptor.version.hasBirchIndexes)
         {
-            long indexSize = primaryIndex.length();
-            try (IndexSummaryBuilder summaryBuilder = new IndexSummaryBuilder(estimatedKeys(), metadata.getMinIndexInterval(), newSamplingLevel))
-            {
-                long indexPosition;
-                while ((indexPosition = primaryIndex.getFilePointer()) != indexSize)
-                {
-                    summaryBuilder.maybeAddEntry(partitioner.decorateKey(ByteBufferUtil.readWithShortLength(primaryIndex)), indexPosition);
-                    RowIndexEntry.Serializer.skip(primaryIndex);
-                }
+            PageAlignedReader primaryIndex = new PageAlignedReader(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
 
-                return summaryBuilder.build(partitioner);
+            try
+            {
+                try (IndexSummaryBuilder summaryBuilder = new IndexSummaryBuilder(estimatedKeys(), metadata.getMinIndexInterval(), newSamplingLevel))
+                {
+                    for (AlignedSegment segment : primaryIndex.getSegments())
+                    {
+                        primaryIndex.setSegment(segment.idx);
+                        summaryBuilder.maybeAddEntry(partitioner.decorateKey(ByteBufferUtil.readWithShortLength(primaryIndex)), segment.offset);
+                    }
+                    return summaryBuilder.build(partitioner);
+                }
+            }
+            finally
+            {
+                FileUtils.closeQuietly(primaryIndex);
             }
         }
-        finally
+        else
         {
-            FileUtils.closeQuietly(primaryIndex);
+            RandomAccessReader primaryIndex = RandomAccessReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
+
+            try
+            {
+                long indexSize = primaryIndex.length();
+                try (IndexSummaryBuilder summaryBuilder = new IndexSummaryBuilder(estimatedKeys(), metadata.getMinIndexInterval(), newSamplingLevel))
+                {
+                    long indexPosition;
+                    while ((indexPosition = primaryIndex.getFilePointer()) != indexSize)
+                    {
+                        summaryBuilder.maybeAddEntry(partitioner.decorateKey(ByteBufferUtil.readWithShortLength(primaryIndex)), indexPosition);
+                        IndexedEntry.Serializer.skip(primaryIndex, descriptor.version);
+                    }
+
+                    return summaryBuilder.build(partitioner);
+                }
+            }
+            finally
+            {
+                FileUtils.closeQuietly(primaryIndex);
+            }
         }
     }
 
@@ -1508,10 +1566,10 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
             if (leftBound.compareTo(last) > 0 || rightBound.compareTo(first) < 0)
                 continue;
 
-            long left = getPosition(leftBound, Operator.GT).position;
+            long left = getPosition(leftBound, Operator.GT).getPosition();
             long right = (rightBound.compareTo(last) > 0)
                          ? uncompressedLength()
-                         : getPosition(rightBound, Operator.GT).position;
+                         : getPosition(rightBound, Operator.GT).getPosition();
 
             if (left == right)
                 // empty range
@@ -1528,13 +1586,16 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
         return new KeyCacheKey(metadata.ksAndCFName, descriptor, key.getKey());
     }
 
-    public void cacheKey(DecoratedKey key, RowIndexEntry info)
+    public void cacheKey(DecoratedKey key, IndexedEntry info)
     {
         CachingOptions caching = metadata.getCaching();
 
+        // We only want to put "non" indexed IndexedEntry objects
+        // into the on-heap cache, or instances of OnHeapIndexedEntry.
         if (!caching.keyCache.isEnabled()
             || keyCache == null
-            || keyCache.getCapacity() == 0)
+            || keyCache.getCapacity() == 0
+            || info instanceof BirchIndexedEntry)
         {
             return;
         }
@@ -1544,17 +1605,17 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
         keyCache.put(cacheKey, info);
     }
 
-    public RowIndexEntry getCachedPosition(DecoratedKey key, boolean updateStats)
+    public IndexedEntry getCachedPosition(DecoratedKey key, boolean updateStats)
     {
         return getCachedPosition(new KeyCacheKey(metadata.ksAndCFName, descriptor, key.getKey()), updateStats);
     }
 
-    private RowIndexEntry getCachedPosition(KeyCacheKey unifiedKey, boolean updateStats)
+    private IndexedEntry getCachedPosition(KeyCacheKey unifiedKey, boolean updateStats)
     {
         if (keyCache != null && keyCache.getCapacity() > 0 && metadata.getCaching().keyCache.isEnabled()) {
             if (updateStats)
             {
-                RowIndexEntry cachedEntry = keyCache.get(unifiedKey);
+                IndexedEntry cachedEntry = keyCache.get(unifiedKey);
                 keyCacheRequest.incrementAndGet();
                 if (cachedEntry != null)
                 {
@@ -1575,7 +1636,7 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
      * Get position updating key cache and stats.
      * @see #getPosition(org.apache.cassandra.db.RowPosition, org.apache.cassandra.io.sstable.SSTableReader.Operator, boolean)
      */
-    public RowIndexEntry getPosition(RowPosition key, Operator op)
+    public IndexedEntry getPosition(RowPosition key, Operator op)
     {
         return getPosition(key, op, true);
     }
@@ -1587,11 +1648,12 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
      * @param updateCacheAndStats true if updating stats and cache
      * @return The index entry corresponding to the key, or null if the key is not present
      */
-    public RowIndexEntry getPosition(RowPosition key, Operator op, boolean updateCacheAndStats)
+    public IndexedEntry getPosition(RowPosition key, Operator op, boolean updateCacheAndStats)
     {
         return getPosition(key, op, updateCacheAndStats, false);
     }
-    private RowIndexEntry getPosition(RowPosition key, Operator op, boolean updateCacheAndStats, boolean permitMatchPastLast)
+
+    private IndexedEntry  getPosition(RowPosition key, Operator op, boolean updateCacheAndStats, boolean permitMatchPastLast)
     {
         // first, check bloom filter
         if (op == Operator.EQ)
@@ -1604,12 +1666,11 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
             }
         }
 
-        // next, the key cache (only make sense for valid row key)
         if ((op == Operator.EQ || op == Operator.GE) && (key instanceof DecoratedKey))
         {
             DecoratedKey decoratedKey = (DecoratedKey)key;
             KeyCacheKey cacheKey = new KeyCacheKey(metadata.ksAndCFName, descriptor, decoratedKey.getKey());
-            RowIndexEntry cachedPosition = getCachedPosition(cacheKey, updateCacheAndStats);
+            IndexedEntry cachedPosition = getCachedPosition(cacheKey, updateCacheAndStats);
             if (cachedPosition != null)
             {
                 Tracing.trace("Key cache hit for sstable {}", descriptor.generation);
@@ -1660,13 +1721,18 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
         // is lesser than the first key of next interval (and in that case we must return the position of the first key
         // of the next interval).
         int i = 0;
-        Iterator<FileDataInput> segments = ifile.iterator(sampledPosition);
+
+        Iterator<FileDataInput> segments = (descriptor.version.hasBirchIndexes)
+                                           ? ifile.indexIterator(sampledPosition)
+                                           : ifile.legacyIndexIterator(sampledPosition);
+
         while (segments.hasNext())
         {
             FileDataInput in = segments.next();
+
             try
             {
-                while (!in.isEOF())
+                while (!in.isCurrentSegmentExausted())
                 {
                     i++;
 
@@ -1697,16 +1763,17 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
                     if (opSatisfied)
                     {
                         // read data position from index entry
-                        RowIndexEntry indexEntry = metadata.comparator.rowIndexEntrySerializer().deserialize(in, descriptor.version);
+                        IndexedEntry indexEntry = metadata.comparator.rowIndexEntrySerializer().deserialize(in, descriptor.version);
+
                         if (exactMatch && updateCacheAndStats)
                         {
                             assert key instanceof DecoratedKey; // key can be == to the index key only if it's a true row key
-                            DecoratedKey decoratedKey = (DecoratedKey)key;
+                            DecoratedKey decoratedKey = (DecoratedKey) key;
 
                             if (logger.isTraceEnabled())
                             {
                                 // expensive sanity check!  see CASSANDRA-4687
-                                FileDataInput fdi = dfile.getSegment(indexEntry.position);
+                                FileDataInput fdi = dfile.getSegment(indexEntry.getPosition());
                                 DecoratedKey keyInDisk = partitioner.decorateKey(ByteBufferUtil.readWithShortLength(fdi));
                                 if (!keyInDisk.equals(key))
                                     throw new AssertionError(String.format("%s != %s in %s", keyInDisk, key, fdi.getPath()));
@@ -1718,11 +1785,12 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
                         }
                         if (op == Operator.EQ && updateCacheAndStats)
                             bloomFilterTracker.addTruePositive();
-                        Tracing.trace("Partition index with {} entries found for sstable {}", indexEntry.columnsIndex().size(), descriptor.generation);
+                        Tracing.trace("Partition index with {} entries found for sstable {}", indexEntry.entryCount(), descriptor.generation);
                         return indexEntry;
                     }
 
-                    RowIndexEntry.Serializer.skip(in);
+                    if (!in.isCurrentSegmentExausted())
+                        IndexedEntry.Serializer.skip(in, descriptor.version);
                 }
             }
             catch (IOException e)
@@ -1732,7 +1800,8 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
             }
             finally
             {
-                FileUtils.closeQuietly(in);
+                if (!descriptor.version.hasBirchIndexes)
+                    FileUtils.closeQuietly(in);
             }
         }
 
@@ -1755,31 +1824,43 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
         if (ifile == null)
             return null;
 
-        Iterator<FileDataInput> segments = ifile.iterator(sampledPosition);
-        while (segments.hasNext())
-        {
-            FileDataInput in = segments.next();
-            try
-            {
-                while (!in.isEOF())
-                {
-                    ByteBuffer indexKey = ByteBufferUtil.readWithShortLength(in);
-                    DecoratedKey indexDecoratedKey = partitioner.decorateKey(indexKey);
-                    if (indexDecoratedKey.compareTo(token) > 0)
-                        return indexDecoratedKey;
+        Iterator<FileDataInput> segments = (descriptor.version.hasBirchIndexes)
+                                           ? ifile.indexIterator(sampledPosition)
+                                           : ifile.legacyIndexIterator(sampledPosition);
 
-                    RowIndexEntry.Serializer.skip(in);
+        try
+        {
+            while (segments.hasNext())
+            {
+                FileDataInput in = segments.next();
+                try
+                {
+                    while (!in.isEOF())
+                    {
+                        ByteBuffer indexKey = ByteBufferUtil.readWithShortLength(in);
+                        DecoratedKey indexDecoratedKey = partitioner.decorateKey(indexKey);
+                        if (indexDecoratedKey.compareTo(token) > 0)
+                            return indexDecoratedKey;
+
+                        IndexedEntry.Serializer.skip(in, descriptor.version);
+                    }
+                }
+                catch (IOException e)
+                {
+                    markSuspect();
+                    throw new CorruptSSTableException(e, in.getPath());
+                }
+                finally
+                {
+                    if (!descriptor.version.hasBirchIndexes)
+                        FileUtils.closeQuietly(in);
                 }
             }
-            catch (IOException e)
-            {
-                markSuspect();
-                throw new CorruptSSTableException(e, in.getPath());
-            }
-            finally
-            {
-                FileUtils.closeQuietly(in);
-            }
+        }
+        finally
+        {
+            if (segments instanceof SegmentedFile.SegmentIterator)
+                ((SegmentedFile.SegmentIterator) segments).close();
         }
 
         return null;
@@ -1979,7 +2060,7 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
         return bloomFilterTracker.getRecentTruePositiveCount();
     }
 
-    public InstrumentingCache<KeyCacheKey, RowIndexEntry> getKeyCache()
+    public InstrumentingCache<KeyCacheKey, IndexedEntry> getKeyCache()
     {
         return keyCache;
     }
@@ -2075,10 +2156,29 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
         return dfile.createReader();
     }
 
-    public RandomAccessReader openIndexReader()
+    public FileDataInput openIndexReader()
     {
         if (ifile != null)
-            return ifile.createReader();
+        {
+            try
+            {
+                if (descriptor.version.hasBirchIndexes)
+                {
+                    PageAlignedReader reader = new PageAlignedReader(new File(ifile.path));
+                    reader.setSegment(0);
+                    return reader;
+                }
+                else
+                {
+                    return ifile.createReader();
+                }
+            }
+            catch (Exception e)
+            {
+                throw new RuntimeException(e);
+            }
+        }
+
         return null;
     }
 
