@@ -157,12 +157,6 @@ public class BirchIndexedEntry implements IndexedEntry
 
     public void reset(boolean reversed, long position)
     {
-        // todo kjkj: remove debug logging
-        if (reader.getCurrentSegment().idx != readerSegment.idx) {
-            logger.info("expected current segment idx: {} but reader segment idx was: {}", reader.getCurrentSegment().idx, readerSegment.idx);
-        }
-        assert reader.getCurrentSegment().idx == readerSegment.idx;
-
         try
         {
             reader.setSegment(readerSegment.idx, 1);

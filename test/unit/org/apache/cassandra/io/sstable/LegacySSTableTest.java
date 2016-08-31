@@ -30,6 +30,7 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -39,6 +40,7 @@ import java.util.SortedSet;
 import java.util.TreeSet;
 
 import org.apache.commons.lang3.ArrayUtils;
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -55,6 +57,7 @@ import org.apache.cassandra.db.DeletionInfo;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.Row;
 import org.apache.cassandra.db.columniterator.SSTableNamesIterator;
+import org.apache.cassandra.db.compaction.OperationType;
 import org.apache.cassandra.db.composites.CellName;
 import org.apache.cassandra.db.composites.CellNameType;
 import org.apache.cassandra.db.composites.Composite;
@@ -103,6 +106,16 @@ public class LegacySSTableTest extends SchemaLoader
         TEST_DATA_NON_JB = new HashSet<>();
         for (int i = 0; i < 10; i++)
             TEST_DATA_NON_JB.add(Integer.toString(i));
+    }
+
+    @AfterClass
+    public static void afterClass()
+    {
+        ColumnFamilyStore cfs = Keyspace.open(KSNAME).getColumnFamilyStore(CFNAME);
+        for (SSTableReader reader : cfs.getSSTables())
+        {
+            reader.selfRef().release();
+        }
     }
 
     /**
@@ -155,21 +168,29 @@ public class LegacySSTableTest extends SchemaLoader
         new StreamPlan("LegacyStreamingTest").transferFiles(FBUtilities.getBroadcastAddress(), details)
                                              .execute().get();
 
+        loadLegacyTable(version);
+
         ColumnFamilyStore cfs = Keyspace.open(KSNAME).getColumnFamilyStore(CFNAME);
         assert cfs.getSSTables().size() == 1;
+
         sstable = cfs.getSSTables().iterator().next();
         CellNameType type = sstable.metadata.comparator;
-        for (String keystring : TEST_DATA_JB_ONLY)
+        for (String keystring : ("jb".equals(version)) ? TEST_DATA_JB_ONLY : TEST_DATA_NON_JB)
         {
             ByteBuffer key = ByteBufferUtil.bytes(keystring);
-            SSTableNamesIterator iter = new SSTableNamesIterator(sstable, Util.dk(key), FBUtilities.singleton(Util.cellname(key), type));
+
+            // get a sorted list of cell names that are expected to be in the key
+            SortedSet<CellName> sortedCellNames = ("jb".equals(version))
+                                                  ? FBUtilities.singleton(Util.cellname(key), type)
+                                                  : getCellNames(keystring, type);
+
+            SSTableNamesIterator iter = new SSTableNamesIterator(sstable, Util.dk(key), sortedCellNames);
             ColumnFamily cf = iter.getColumnFamily();
 
             // check not deleted (CASSANDRA-6527)
             assert cf.deletionInfo().equals(DeletionInfo.live());
-            assert iter.next().name().toByteBuffer().equals(key);
+            assert iter.next().name().toByteBuffer().equals(("jb".equals(version)) ? key : sortedCellNames.first().toByteBuffer());
         }
-        sstable.selfRef().release();
     }
 
     @Test
@@ -200,7 +221,9 @@ public class LegacySSTableTest extends SchemaLoader
         {
             // ensure we don't have any sstables from previous tests
             deleteAllFilesRecursively(cfDir);
-            cfs.getDataTracker().unreferenceSSTables();
+            Collection<SSTableReader> previouslyLoadedSSTables = cfs.getSSTables();
+            cfs.getDataTracker().markCompactedSSTablesReplaced(previouslyLoadedSSTables, Collections.<SSTableReader>emptySet(), OperationType.CLEANUP);
+            Assert.assertEquals(0, cfs.getSSTables().size());
 
             for (File version : LEGACY_SSTABLE_ROOT.listFiles())
             {
@@ -255,24 +278,8 @@ public class LegacySSTableTest extends SchemaLoader
                 // confirm that the bloom filter does not reject any keys/names
                 DecoratedKey dk = reader.partitioner.decorateKey(key);
 
-                // the source legacy sstables have 10 columns for keys 0-4
-                // and 5000 columns for keys 5-9. This ensures that we will
-                // properly trigger and exercize both the indexed and non-indexed
-                // code paths, as we only create indexes if there is more than
-                // 64kb of data in a given row.
-                int expectedNumColumns = (Integer.parseInt(keystring) < 5) ? 10 : 5000;
-
-                // attempt to randomly select a subset of the number of columns.
-                // The idea here is to ensure the SSTableNamesIterator both returns
-                // and skips the correct columns
-                SortedSet<CellName> sortedCellNames = new TreeSet<>(type);
-                for (int i = 0; i < expectedNumColumns; i++)
-                {
-                    // pick a random number from 0-10 and check if it's even
-                    // and use that to randomly decide if we should add a column or not
-                    if ((RANDOM.nextInt(10) & 1) == 0)
-                        sortedCellNames.add(Util.cellname("col" + i));
-                }
+                // get a sorted list of cell names that are expected to be in the key
+                SortedSet<CellName> sortedCellNames = getCellNames(keystring, type);
 
                 List<Composite> ret = new ArrayList<>();
                 try (SSTableNamesIterator iter = new SSTableNamesIterator(reader, dk, sortedCellNames))
@@ -341,6 +348,30 @@ public class LegacySSTableTest extends SchemaLoader
                 return FileVisitResult.CONTINUE;
             }
         });
+    }
+
+    private static SortedSet<CellName> getCellNames(String keystring, CellNameType type)
+    {
+        // the source legacy sstables have 10 columns for keys 0-4
+        // and 5000 columns for keys 5-9. This ensures that we will
+        // properly trigger and exercize both the indexed and non-indexed
+        // code paths, as we only create indexes if there is more than
+        // 64kb of data in a given row.
+        int expectedNumColumns = (Integer.parseInt(keystring) < 5) ? 10 : 5000;
+
+        // attempt to randomly select a subset of the number of columns.
+        // The idea here is to ensure the SSTableNamesIterator both returns
+        // and skips the correct columns
+        SortedSet<CellName> sortedCellNames = new TreeSet<>(type);
+        for (int i = 0; i < expectedNumColumns; i++)
+        {
+            // pick a random number from 0-10 and check if it's even
+            // and use that to randomly decide if we should add a column or not
+            if ((RANDOM.nextInt(10) & 1) == 0)
+                sortedCellNames.add(Util.cellname("col" + i));
+        }
+
+        return sortedCellNames;
     }
 
     private static void copySSTablesToTestData(File sourceTableDir, File cfDir) throws IOException
