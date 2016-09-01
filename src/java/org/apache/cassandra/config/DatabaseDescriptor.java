@@ -660,6 +660,10 @@ public class DatabaseDescriptor
         }
         if (seedProvider.getSeeds().size() == 0)
             throw new ConfigurationException("The seed provider lists no seeds.");
+
+        if (conf.sstable_index_segment_padding_in_kb < 512 || conf.sstable_index_segment_padding_in_kb > 4096
+            || (conf.sstable_index_segment_padding_in_kb & (conf.sstable_index_segment_padding_in_kb & (conf.sstable_index_segment_padding_in_kb - 1))) != 0)
+            throw new ConfigurationException("sstable_index_segment_padding_in_kb must be positive, between 512 and 4096, and a multiple of 2");
     }
 
     private static IEndpointSnitch createEndpointSnitch(String snitchClassName) throws ConfigurationException
@@ -1724,4 +1728,8 @@ public class DatabaseDescriptor
         return conf.gc_warn_threshold_in_ms;
     }
 
+    public static int getSSTableIndexSegmentPaddingLength()
+    {
+        return conf.sstable_index_segment_padding_in_kb;
+    }
 }

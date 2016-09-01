@@ -25,6 +25,7 @@ import java.util.EnumMap;
 import java.util.Iterator;
 import java.util.List;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.composites.CType;
 import org.apache.cassandra.db.composites.Composite;
 import org.apache.cassandra.io.sstable.IndexInfo;
@@ -165,11 +166,8 @@ import org.apache.cassandra.io.sstable.IndexInfo;
  */
 public class BirchWriter<T>
 {
-    public static final short VERSION_1_0 = 1;
+    private static final short VERSION_1_0 = 1;
     public static final short CURRENT_VERSION = VERSION_1_0;
-
-    public final static int DEFAULT_CACHE_LINE_SIZE = 1 << 12; // 4Kb
-    public final static short MAX_ELEMENT_SIZE_WITHOUT_OVERFLOW = 1 << 10; //1Kb
 
     private final Iterator<TreeSerializable> elementsToAddIterator;
     private final int cacheLineSize;
@@ -324,7 +322,7 @@ public class BirchWriter<T>
             writer.write(overflowBuf);
             int overflowPageLength = (int) (writer.getFilePointer() - overflowPageOffset);
             descriptorBuilder = descriptorBuilder.overflowPageOffset(overflowPageOffset).overflowPageLength(overflowPageLength);
-            long alignTo = PageAlignedReader.getNextAlignedOffset(writer.getCurrentFilePosition());
+            long alignTo =  writer.getNextAlignedOffset(writer.getCurrentFilePosition());
             // although we don't pad/chunk the overflow page internally, we do want to make sure
             // we pad the end of it out to an aligned boundary
             writer.seek(alignTo + cacheLineSize);
@@ -342,8 +340,8 @@ public class BirchWriter<T>
         private final Iterator<TreeSerializable> elms;
         private final SerializerType serializerType;
         private final CType type;
-        private int cacheLineSize = DEFAULT_CACHE_LINE_SIZE;
-        private short maxKeyLengthWithoutOverflow = MAX_ELEMENT_SIZE_WITHOUT_OVERFLOW;
+        private int cacheLineSize = DatabaseDescriptor.getSSTableIndexSegmentPaddingLength();
+        private short maxKeyLengthWithoutOverflow = (short) ((cacheLineSize / 2) / 2);
 
         public Builder(Iterator elms, SerializerType serializerType, CType type)
         {

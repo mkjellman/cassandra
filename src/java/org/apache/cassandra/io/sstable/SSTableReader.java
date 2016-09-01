@@ -731,7 +731,13 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
     {
         try
         {
-            SegmentedFile.Builder ibuilder = SegmentedFile.getBuilder(DatabaseDescriptor.getIndexAccessMode());
+            // for legacy sstables, we need to make sure we create a non-page cache aligned reader
+            Config.DiskAccessMode indexDiskAccessMode = (!descriptor.version.hasBirchIndexes
+                                                         && DatabaseDescriptor.getIndexAccessMode() == Config.DiskAccessMode.mmap_cache_aligned)
+                                                        ? Config.DiskAccessMode.mmap
+                                                        : DatabaseDescriptor.getIndexAccessMode();
+
+            SegmentedFile.Builder ibuilder = SegmentedFile.getBuilder(indexDiskAccessMode);
             SegmentedFile.Builder dbuilder = compression
                                          ? SegmentedFile.getCompressedBuilder()
                                          : SegmentedFile.getBuilder(DatabaseDescriptor.getDiskAccessMode());

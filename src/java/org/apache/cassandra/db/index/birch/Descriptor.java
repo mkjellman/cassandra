@@ -20,8 +20,9 @@ package org.apache.cassandra.db.index.birch;
 
 import java.io.IOException;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
+
 import static org.apache.cassandra.db.index.birch.BirchWriter.CURRENT_VERSION;
-import static org.apache.cassandra.db.index.birch.BirchWriter.DEFAULT_CACHE_LINE_SIZE;
 import static org.apache.cassandra.db.index.birch.BirchWriter.SerializerType;
 
 /**
@@ -33,9 +34,6 @@ import static org.apache.cassandra.db.index.birch.BirchWriter.SerializerType;
  */
 public class Descriptor
 {
-
-    public static final int BLOCK_SIZE = 4096;
-
     private final short version;
     private final long rootOffset;
     private final SerializerType serializerType;
@@ -73,7 +71,7 @@ public class Descriptor
 
         public Builder(SerializerType serializerType)
         {
-            this(CURRENT_VERSION, DEFAULT_CACHE_LINE_SIZE, serializerType);
+            this(CURRENT_VERSION, DatabaseDescriptor.getSSTableIndexSegmentPaddingLength(), serializerType);
         }
 
         public Builder(int alignedPageSize, SerializerType serializerType)

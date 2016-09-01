@@ -31,7 +31,6 @@ import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 
 import static org.apache.cassandra.db.index.birch.BirchWriter.SERIALIZERS;
-import static org.apache.cassandra.db.index.birch.Descriptor.BLOCK_SIZE;
 
 /**
  * Provides logic to both search and iterate through a serialized Birch tree.
@@ -58,7 +57,7 @@ public class BirchReader<T> implements Closeable
 
         assert !reader.getCurrentSubSegment().shouldUseSingleMmappedBuffer();
 
-        reader.seek(reader.getCurrentSegment().alignedEndOffset - BLOCK_SIZE);
+        reader.seek(reader.getCurrentSubSegment().getAlignedEndOffset() - reader.getCurrentSubSegment().pageChunkSize);
         this.descriptor = Descriptor.deserialize(reader);
         reader.seek(reader.getCurrentSubSegment().offset);
         this.serializer = SERIALIZERS.get(descriptor.getSerializerType());

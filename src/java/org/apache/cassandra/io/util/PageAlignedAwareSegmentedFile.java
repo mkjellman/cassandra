@@ -33,20 +33,11 @@ import org.apache.cassandra.db.index.birch.PageAlignedReader;
 public class PageAlignedAwareSegmentedFile extends SegmentedFile
 {
     private final File file;
-    private final List<AlignedSegment> segments;
 
     public PageAlignedAwareSegmentedFile(String path)
     {
         super(new Cleanup(path), path, new File(path).length());
-        try
-        {
-            this.file = new File(path);
-            this.segments = deserializeSegments();
-        }
-        catch (IOException e)
-        {
-            throw new RuntimeException(e);
-        }
+        this.file = new File(path);
     }
 
     public PageAlignedAwareSegmentedFile sharedCopy()
@@ -88,17 +79,10 @@ public class PageAlignedAwareSegmentedFile extends SegmentedFile
 
     public FileDataInput getSegment(long position)
     {
-        int segmentRes = Collections.binarySearch(segments, new AlignedSegment(0, position, 0, 0), new Comparator<AlignedSegment>()
-        {
-            public int compare(AlignedSegment o1, AlignedSegment o2)
-            {
-                return Long.compare(o1.offset, o2.offset);
-            }
-        });
-
         try
         {
             PageAlignedReader reader = new PageAlignedReader(file);
+            int segmentRes = reader.findIdxForPosition(position);
             reader.setSegment(segmentRes);
             return reader;
         }
@@ -106,31 +90,5 @@ public class PageAlignedAwareSegmentedFile extends SegmentedFile
         {
             throw new RuntimeException(e);
         }
-    }
-
-    private List<AlignedSegment> deserializeSegments() throws IOException
-    {
-        List<AlignedSegment> segments = new ArrayList<>();
-
-        try (final RandomAccessFile raf = new RandomAccessFile(file, "r");
-             final FileChannel channel = raf.getChannel())
-        {
-            channel.position(raf.length() - Long.BYTES);
-            long segmentPointersOffset = raf.readLong();
-
-            if (segmentPointersOffset == 0)
-                return segments;
-
-            channel.position(segmentPointersOffset);
-
-            int numSegments = raf.readInt();
-
-            for (int i = 0; i < numSegments; i++)
-            {
-                segments.add(AlignedSegment.SERIALIZER.deserialize(raf));
-            }
-        }
-
-        return segments;
     }
 }

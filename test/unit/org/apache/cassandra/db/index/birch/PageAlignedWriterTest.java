@@ -31,6 +31,8 @@ import org.apache.cassandra.db.marshal.UTF8Type;
 
 public class PageAlignedWriterTest
 {
+    public static final int DEFAULT_PAGE_ALIGNMENT_BOUNDARY = 4096;
+
     private static final Random RANDOM = new Random();
 
     @Test
@@ -118,7 +120,7 @@ public class PageAlignedWriterTest
                 writer.write(randomLongWordBytes);
                 writer.finalizeCurrentSubSegment();
 
-                writer.startNewSubSegment(PageAlignedWriter.DEFAULT_PAGE_ALIGNMENT_BOUNDARY);
+                writer.startNewSubSegment(DEFAULT_PAGE_ALIGNMENT_BOUNDARY);
                 for (int k = 0; k < 10; k++)
                 {
                     byte[] buf = new byte[4096];

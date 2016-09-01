@@ -78,9 +78,17 @@ public class PageAlignedReader implements FileDataInput, Closeable
         raf.seek(0);
     }
 
-    public static long getNextAlignedOffset(long offset)
+    protected long getNextAlignedOffset(long offset)
     {
-        return offset & 0xfffffffffffff000L;
+        // if offset <= alignTo, return 0
+        // if next aligned offset > offset, return aligned offset - alignTo
+        int alignTo = currentSubSegment.pageChunkSize;
+        if (alignTo == 0 || offset == alignTo)
+            return offset;
+        if (offset <= alignTo)
+            return 0;
+        long alignedOffset = (offset + alignTo - 1) & ~(alignTo - 1);
+        return (alignedOffset > offset) ? alignedOffset - alignTo : alignedOffset;
     }
 
     /**
@@ -213,12 +221,15 @@ public class PageAlignedReader implements FileDataInput, Closeable
         if (currentSubSegment.shouldUseSingleMmappedBuffer())
         {
             assert currentSubSegment.alignedLength < ((1 << 21) - 1); //2GB max mmap-able size
+            maybeFreeCurrentMmappedBuffer();
             currentMmappedBuffer = channel.map(FileChannel.MapMode.READ_ONLY, raf.getFilePointer(), currentSubSegment.length);
             currentMmappedBufferBounds = new SegmentBounds(currentSubSegment.offset, currentSubSegment.offset + currentSubSegment.alignedLength - 1);
         }
         else
         {
-            currentMmappedBuffer = channel.map(FileChannel.MapMode.READ_ONLY, raf.getFilePointer(), currentSubSegment.pageChunkSize);
+            long lengthToMap = (raf.length() - raf.getFilePointer() < currentSubSegment.pageChunkSize) ? raf.length() - raf.getFilePointer() : currentSubSegment.pageChunkSize;
+            maybeFreeCurrentMmappedBuffer();
+            currentMmappedBuffer = channel.map(FileChannel.MapMode.READ_ONLY, raf.getFilePointer(), lengthToMap);
             currentMmappedBufferBounds = new SegmentBounds(raf.getFilePointer(), raf.getFilePointer() + (currentSubSegment.pageChunkSize - 1));
         }
     }
@@ -369,16 +380,14 @@ public class PageAlignedReader implements FileDataInput, Closeable
         // contains the resired position, prior to calling seek.
         assert pos >= 0 && pos >= currentSubSegment.offset && pos <= currentSubSegment.getEndOffset();
 
+        long alignedSegmentOffset = getNextAlignedOffset(pos);
         if (currentMmappedBuffer != null && currentMmappedBufferBounds.offsetWithinBounds(pos))
         {
-            int relativeOffset = (int) (pos - getNextAlignedOffset(pos));
+            int relativeOffset = (int) (pos - alignedSegmentOffset);
             currentMmappedBuffer.position(relativeOffset);
         }
         else
         {
-            long alignedSegmentOffset = getNextAlignedOffset(pos);
-            if (alignedSegmentOffset > pos || pos == currentSubSegment.getEndOffset())
-                alignedSegmentOffset -= currentSubSegment.pageChunkSize;
             channel.position(alignedSegmentOffset);
             setCurrentMmappedBuffer();
             int relativeOffset = (int) (pos - alignedSegmentOffset);
@@ -450,22 +459,33 @@ public class PageAlignedReader implements FileDataInput, Closeable
     @Override
     public void close() throws IOException
     {
+        /*
+         * Try forcing the unmapping of segments using undocumented unsafe sun APIs.
+         * If this fails (non Sun JVM), we'll have to wait for the GC to finalize the mapping.
+         * If this works and a thread tries to access any segment, hell will unleash on earth.
+         */
+        maybeFreeCurrentMmappedBuffer();
+
         if (FileUtils.isCleanerAvailable())
         {
-            /*
-             * Try forcing the unmapping of segments using undocumented unsafe sun APIs.
-             * If this fails (non Sun JVM), we'll have to wait for the GC to finalize the mapping.
-             * If this works and a thread tries to access any segment, hell will unleash on earth.
-             */
-            if (currentMmappedBuffer != null)
-                FileUtils.clean(currentMmappedBuffer);
             if (serializedSegmentDescriptorsBuf != null)
                 FileUtils.clean(serializedSegmentDescriptorsBuf);
         }
 
-        currentMmappedBuffer = null;
         channel.close();
         raf.close();
+    }
+
+    private void maybeFreeCurrentMmappedBuffer()
+    {
+        if (FileUtils.isCleanerAvailable())
+        {
+            if (currentMmappedBuffer != null)
+            {
+                FileUtils.clean(currentMmappedBuffer);
+                currentMmappedBuffer = null;
+            }
+        }
     }
 
     @Override

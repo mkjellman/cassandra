@@ -644,7 +644,7 @@ public class SSTableWriter extends SSTable
         public void abort()
         {
             summary.close();
-            //indexFile.abort(); // todo: what is the abort behavior for birch
+            //indexFile.abort(); // todo kjkj: what is the abort behavior for birch
             bf.close();
         }
 
@@ -685,7 +685,7 @@ public class SSTableWriter extends SSTable
             // we can't un-set the bloom filter addition, but extra keys in there are harmless.
             // we can't reset dbuilder either, but that is the last thing called in afterappend so
             // we assume that if that worked then we won't be trying to reset.
-            //indexFile.resetAndTruncate(mark); // todo: I believe this can be removed entirely now
+            //indexFile.resetAndTruncate(mark); // todo kjkj: I believe this can be removed entirely now
         }
 
         @Override

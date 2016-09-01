@@ -31,18 +31,34 @@ public class PageAlignedReaderTest
 {
 
     @Test
-    public void calculateRelativeMmappedOffsets() throws Exception {
-        Assert.assertEquals(0, PageAlignedReader.getNextAlignedOffset(0));
-        Assert.assertNotSame(4096, PageAlignedReader.getNextAlignedOffset(0));
-        Assert.assertEquals(0, PageAlignedReader.getNextAlignedOffset(2));
-        Assert.assertEquals(0, PageAlignedReader.getNextAlignedOffset(4095));
-        Assert.assertEquals(4096, PageAlignedReader.getNextAlignedOffset(4096));
-        Assert.assertEquals(4096, PageAlignedReader.getNextAlignedOffset(4097));
-        Assert.assertEquals(4096, PageAlignedReader.getNextAlignedOffset((4096 * 2) - 1));
-        Assert.assertEquals((4096 * 2), PageAlignedReader.getNextAlignedOffset((4096 * 2)));
-        Assert.assertEquals((4096 * 2), PageAlignedReader.getNextAlignedOffset((4096 * 2) + 1));
-        Assert.assertEquals((4096 * 3), PageAlignedReader.getNextAlignedOffset((4096 * 3)));
-        Assert.assertEquals((4096 * 3), PageAlignedReader.getNextAlignedOffset((4096 * 3) + 1));
+    public void calculateRelativeMmappedOffsets() throws Exception
+    {
+        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), "btree");
+        try
+        {
+            createPageAlignedWriter(tmpFile);
+
+            try (PageAlignedReader reader = new PageAlignedReader(tmpFile))
+            {
+                reader.setSegment(0);
+
+                Assert.assertEquals(0, reader.getNextAlignedOffset(0));
+                Assert.assertNotSame(4096, reader.getNextAlignedOffset(0));
+                Assert.assertEquals(0, reader.getNextAlignedOffset(2));
+                Assert.assertEquals(0, reader.getNextAlignedOffset(4095));
+                Assert.assertEquals(4096, reader.getNextAlignedOffset(4096));
+                Assert.assertEquals(4096, reader.getNextAlignedOffset(4097));
+                Assert.assertEquals(4096, reader.getNextAlignedOffset((4096 * 2) - 1));
+                Assert.assertEquals((4096 * 2), reader.getNextAlignedOffset((4096 * 2)));
+                Assert.assertEquals((4096 * 2), reader.getNextAlignedOffset((4096 * 2) + 1));
+                Assert.assertEquals((4096 * 3), reader.getNextAlignedOffset((4096 * 3)));
+                Assert.assertEquals((4096 * 3), reader.getNextAlignedOffset((4096 * 3) + 1));
+            }
+        }
+        finally
+        {
+            Assert.assertTrue(tmpFile.delete());
+        }
     }
 
 

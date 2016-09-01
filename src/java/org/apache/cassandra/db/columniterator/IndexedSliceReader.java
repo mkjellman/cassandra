@@ -374,8 +374,6 @@ class IndexedSliceReader extends AbstractIterator<OnDiskAtom> implements OnDiskA
         {
             if (!indexedEntry.hasNext())
             {
-                // todo kjkj tmp
-                indexedEntry.close();
                 return false;
             }
 

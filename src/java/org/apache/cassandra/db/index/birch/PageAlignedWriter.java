@@ -27,6 +27,7 @@ import java.nio.channels.WritableByteChannel;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.io.util.DataOutputStreamAndChannel;
 
@@ -67,7 +68,7 @@ import org.apache.cassandra.utils.ByteBufferUtil;
  *            1 1 1 1 1 2 2 2 2 2 3 3 3 3 3 4 4 4 4 4 5 5 5 5 5 6 6
  *  0 2 4 6 8 0 2 4 6 8 0 2 4 6 8 0 2 4 6 8 0 2 4 6 8 0 2 4 6 8 0 2
  * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- * |       Number of Elements      |  Initial Serialization Offset |
+ * |       Number of Segments      |  Initial Serialization Offset |
  * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
  * |              Final Segment Max Valid File Offset              |
  * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -84,7 +85,7 @@ import org.apache.cassandra.utils.ByteBufferUtil;
  * | Segment End Offset cont. (s3) |Rel. Serialization End Pos (s3)||
  * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
  * |                                                               /
- * /                     Serialized Segments                       /
+ * /                 Serialized Segment Metadata                   /
  * /                                                               |
  * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
  * |    File Offset to First Byte of Serialized Segments (this)    |
@@ -156,7 +157,6 @@ public class PageAlignedWriter implements WritableByteChannel
 {
     private static final Logger logger = LoggerFactory.getLogger(PageAlignedWriter.class);
 
-    public static final int DEFAULT_PAGE_ALIGNMENT_BOUNDARY = 4096;
     public static final int SEGMENT_NOT_PAGE_ALIGNED = 0;
 
     public final DataOutputPlus stream; // stream is eventually flushed and written to out
@@ -302,7 +302,7 @@ public class PageAlignedWriter implements WritableByteChannel
 
     private int alignTo()
     {
-        return (currentSubSegmentPageBlockSize == 0) ? DEFAULT_PAGE_ALIGNMENT_BOUNDARY : currentSubSegmentPageBlockSize;
+        return (currentSubSegmentPageBlockSize == 0) ? DatabaseDescriptor.getSSTableIndexSegmentPaddingLength() : currentSubSegmentPageBlockSize;
     }
 
     public long getNextAlignedOffset(long offset)
@@ -480,7 +480,7 @@ public class PageAlignedWriter implements WritableByteChannel
 
     public int write(ByteBuffer src, int off, int len) throws IOException
     {
-        // todo: use a shared buffer like SequentialWriter..
+        // todo kjkj: use a shared buffer like SequentialWriter..
         byte[] buf = new byte[len];
         ByteBufferUtil.arrayCopy(src, off, buf, 0, len);
         out.write(buf);
