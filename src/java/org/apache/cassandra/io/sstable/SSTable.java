@@ -217,7 +217,7 @@ public abstract class SSTable
     {
         if (ifile instanceof PageAlignedReader)
         {
-            int keys = ((PageAlignedReader) ifile).getSegments().size();
+            int keys = ((PageAlignedReader) ifile).numberOfSegments();
             // todo: kjkj this used to be limited... collect sizes for the first 10000 keys, or first 10 megabytes of data
             //final int SAMPLES_CAP = 10000, BYTES_CAP = (int)Math.min(10000000, ifile.length());
             return keys;

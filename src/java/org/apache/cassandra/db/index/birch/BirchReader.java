@@ -22,8 +22,10 @@ import com.google.common.collect.AbstractIterator;
 
 import org.apache.cassandra.db.composites.CType;
 import org.apache.cassandra.db.composites.Composite;
+import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.utils.Pair;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
@@ -43,7 +45,7 @@ import static org.apache.cassandra.db.index.birch.Descriptor.BLOCK_SIZE;
  *
  * @see BirchWriter
  */
-public class BirchReader<T>
+public class BirchReader<T> implements Closeable
 {
     private final PageAlignedReader reader;
     private final Descriptor descriptor;
@@ -636,5 +638,24 @@ public class BirchReader<T>
                 throw new RuntimeException(e);
             }
         }
+    }
+
+    @Override
+    public void close()
+    {
+        if (FileUtils.isCleanerAvailable())
+        {
+        /*
+         * Try forcing the unmapping of segments using undocumented unsafe sun APIs.
+         * If this fails (non Sun JVM), we'll have to wait for the GC to finalize the mapping.
+         * If this works and a thread tries to access any segment, hell will unleash on earth.
+         */
+            if (overflowBuf != null)
+            {
+                FileUtils.clean(overflowBuf);
+            }
+        }
+
+        FileUtils.closeQuietly(reader);
     }
 }

@@ -832,8 +832,10 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
 
                 if (descriptor.version.hasBirchIndexes)
                 {
-                    for (AlignedSegment segment : ((PageAlignedReader) primaryIndex).getSegments())
+                    PageAlignedReader.AlignedSegmentIterator segmentIterator = ((PageAlignedReader) primaryIndex).getSegmentIterator();
+                    while (segmentIterator.hasNext())
                     {
+                        AlignedSegment segment = segmentIterator.next();
                         ((PageAlignedReader) primaryIndex).setSegment(segment.idx);
 
                         ByteBuffer key = ByteBufferUtil.readWithShortLength(primaryIndex);
@@ -1234,8 +1236,10 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
             {
                 try (IndexSummaryBuilder summaryBuilder = new IndexSummaryBuilder(estimatedKeys(), metadata.getMinIndexInterval(), newSamplingLevel))
                 {
-                    for (AlignedSegment segment : primaryIndex.getSegments())
+                    PageAlignedReader.AlignedSegmentIterator segmentIterator = primaryIndex.getSegmentIterator();
+                    while (segmentIterator.hasNext())
                     {
+                        AlignedSegment segment = segmentIterator.next();
                         primaryIndex.setSegment(segment.idx);
                         summaryBuilder.maybeAddEntry(partitioner.decorateKey(ByteBufferUtil.readWithShortLength(primaryIndex)), segment.offset);
                     }
@@ -1653,7 +1657,7 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
         return getPosition(key, op, updateCacheAndStats, false);
     }
 
-    private IndexedEntry  getPosition(RowPosition key, Operator op, boolean updateCacheAndStats, boolean permitMatchPastLast)
+    private IndexedEntry getPosition(RowPosition key, Operator op, boolean updateCacheAndStats, boolean permitMatchPastLast)
     {
         // first, check bloom filter
         if (op == Operator.EQ)

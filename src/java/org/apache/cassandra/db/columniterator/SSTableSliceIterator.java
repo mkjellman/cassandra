@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.db.columniterator;
 
+import java.io.Closeable;
 import java.io.IOException;
 
 import org.apache.cassandra.db.ColumnFamily;
@@ -30,7 +31,7 @@ import org.apache.cassandra.io.util.FileDataInput;
 /**
  *  A Cell Iterator over SSTable
  */
-public class SSTableSliceIterator implements OnDiskAtomIterator
+public class SSTableSliceIterator implements OnDiskAtomIterator, Closeable
 {
     private final OnDiskAtomIterator reader;
     private final DecoratedKey key;
@@ -97,11 +98,11 @@ public class SSTableSliceIterator implements OnDiskAtomIterator
 
     public void close() throws IOException
     {
-        if (reader != null)
-            reader.close();
-
         if (indexEntry != null)
             indexEntry.close();
+
+        if (reader != null)
+            reader.close();
     }
 
 }

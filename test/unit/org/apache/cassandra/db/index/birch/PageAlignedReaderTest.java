@@ -20,7 +20,6 @@ package org.apache.cassandra.db.index.birch;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.List;
 import java.util.UUID;
 
 import org.junit.Assert;
@@ -60,7 +59,7 @@ public class PageAlignedReaderTest
 
             try (PageAlignedReader reader = new PageAlignedReader(tmpFile))
             {
-                reader.getSegmentForOffset(tmpFile.length() + 10);
+                reader.findIdxForPosition(tmpFile.length() + 10);
             }
         }
         finally
@@ -82,7 +81,7 @@ public class PageAlignedReaderTest
 
             try (PageAlignedReader reader = new PageAlignedReader(tmpFile))
             {
-                int segment = reader.getSegmentForOffset((4096 * 2) + 2);
+                int segment = reader.findIdxForPosition((4096 * 2) + 2);
                 Assert.assertEquals(2, segment);
             }
         }

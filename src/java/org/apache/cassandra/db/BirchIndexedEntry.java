@@ -22,9 +22,6 @@ import java.io.IOException;
 import java.util.Comparator;
 import java.util.List;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import org.apache.cassandra.db.composites.CType;
 import org.apache.cassandra.db.composites.CellNameType;
 import org.apache.cassandra.db.composites.Composite;
@@ -32,15 +29,12 @@ import org.apache.cassandra.db.index.birch.AlignedSegment;
 import org.apache.cassandra.db.index.birch.BirchReader;
 import org.apache.cassandra.db.index.birch.PageAlignedReader;
 import org.apache.cassandra.io.sstable.IndexInfo;
-import org.apache.cassandra.io.util.FileUtils;
 
 /**
  * An IndexedEntry implementation that is backed by a BirchWriter Index
  */
 public class BirchIndexedEntry implements IndexedEntry
 {
-    private static final Logger logger = LoggerFactory.getLogger(BirchIndexedEntry.class);
-
     private final long position;
     private final CType type;
     private final PageAlignedReader reader;
@@ -152,7 +146,8 @@ public class BirchIndexedEntry implements IndexedEntry
 
     public void close()
     {
-        FileUtils.closeQuietly(reader);
+        // todo kjkj should BirchIndexedEntry close the reader?
+        //FileUtils.closeQuietly(reader);
     }
 
     public void reset(boolean reversed, long position)

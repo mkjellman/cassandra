@@ -36,6 +36,7 @@ import org.slf4j.LoggerFactory;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
 /**
+ * <strong>1.1. Page Aligned File Format</strong>
  * <pre>
  * {@code
  *                  1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2 3 3 3 3 3 3 3 3
@@ -57,6 +58,37 @@ import org.apache.cassandra.utils.ByteBufferUtil;
  * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
  * |    Segment Pointers   |p|
  * +-+-+-+-+-+-+-+-+-+-+-+-+-+
+ * }
+ * </pre>
+ * <p>
+ * <strong>1.2. 'Segment Pointers' Serialized Format</strong>
+ * <pre>
+ * {@code
+ *            1 1 1 1 1 2 2 2 2 2 3 3 3 3 3 4 4 4 4 4 5 5 5 5 5 6 6
+ *  0 2 4 6 8 0 2 4 6 8 0 2 4 6 8 0 2 4 6 8 0 2 4 6 8 0 2 4 6 8 0 2
+ * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ * |       Number of Elements      |  Initial Serialization Offset |
+ * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ * |              Final Segment Max Valid File Offset              |
+ * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ * |                  Segment Start Offset (s1)                    |
+ * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ * |Relative Serialization Pos (s1)|   Segment Start Offset (s2)   /
+ * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ * |Segment Start Offset cont. (s2)|Relative Serialization Pos (s2)|
+ * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ * |                  Segment Start Offset (s3)                    |
+ * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ * |Relative Serialization Pos (s3)|    Segment End Offset (s3)    /
+ * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ * | Segment End Offset cont. (s3) |Rel. Serialization End Pos (s3)||
+ * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ * |                                                               /
+ * /                     Serialized Segments                       /
+ * /                                                               |
+ * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ * |    File Offset to First Byte of Serialized Segments (this)    |
+ * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
  * }
  * </pre>
  *
@@ -90,6 +122,28 @@ import org.apache.cassandra.utils.ByteBufferUtil;
  * the encoded segment pointers. These pointers then contain the offsets
  * to each segment (and the padding/alignment requirements that segment
  * was serialized with).
+ * <p>
+ * The Segment Pointers section is serialized in a way to optimize deserialization.
+ * Originally, the segments were simply serialized one after another. On deserialization,
+ * the PageAlignedReader constructor would deserialize all AlignedSegments. This is
+ * highly inefficient for three main reasons: 1) there is a high CPU cost while
+ * deserializing the segments. During this time the thread will be blocked. 2) if
+ * a given SSTable contains a very large number of keys, as there is a 1:1 mapping
+ * of keys to segments, this will cause a significant number of objects to be allocated
+ * on the heap. 3) if a PageAlignedReader is created and intended to be used for only
+ * one key, we don't want to deserialize all segments just to throw all - 1 of them away.
+ * <p>
+ * To address these concerns/lessons and optimize for deserialization/reading, the number of segments,
+ * relative offset to the variable length actual serialized segment bytes, end offset of the final segment,
+ * and the starting file offset [long] and relative offset inside the segment pointers section to the full
+ * serialized AlignedSegment for each segment to be serialized. We encode the starting file offset and
+ * serialized relative position for the number of elements + 1, where the +1 is actually the end offset
+ * of the final object. This allows calculation of the serialized size of the final object.
+ * <p>
+ * By serializing the fixed elements at the front, this allows us to find a matching segment for a
+ * given position by binary searching over the fixed starting offsets on disk. Once we find the
+ * required segment, we can skip to the offset and deserialize the entire AlignedSegment object
+ * when necessary. This means we only allocate objects if 100% necessary to service a request.
  * <p>
  * Instances of this class are <b>*not*</b> thread safe.
  *
@@ -267,12 +321,66 @@ public class PageAlignedWriter implements WritableByteChannel
         // make sure starting offset of segments is aligned on a good boundary..
         assert ((segmentPointersStartingOffset % alignTo()) == 0);
 
+        // first, serialize the total number of segments we're going to serialize
         out.writeInt(finishedSegments.size());
 
+        // calculate the "relative" starting offset where we'll serialize the full variable
+        // length segments
+        int serializedSegmentsStartingOffset = Integer.BYTES + Integer.BYTES + Long.BYTES + ((Long.BYTES + Integer.BYTES) * (finishedSegments.size() + 1));
+        out.writeInt(serializedSegmentsStartingOffset);
+
+        // write out the maximum aligned end offset of the final segment.
+        // this allows us to guard against bogus reader requests on deserialization
+        // without needing to deserialize the entire final segment first to get this
+        // value
+        out.writeLong(finishedSegments.get(finishedSegments.size() - 1).alignedEndOffset);
+
+        int currentRelativeOffsetToSerializedSegments = 0;
+        long maxOffsetWritten = 0;
+
+        int currentSegmentIdx = 0;
         for (AlignedSegment segment : finishedSegments)
         {
+            // for each segment, skip forwards by the fixed overhead (number of elements,
+            // relative starting offset the segments will be serialized at, max segment offset)
+            // and the size of the fixed components times the index of the segment we're serializing
+            out.seek(segmentPointersStartingOffset + Integer.BYTES + Integer.BYTES + Long.BYTES + (segment.idx * (Long.BYTES + Integer.BYTES)));
+
+            // the starting file offset for this segment
+            out.writeLong(segment.offset);
+            // the relative offset to start reading at to deserialize the AlignedSegment object
+            out.writeInt(currentRelativeOffsetToSerializedSegments);
+
+            // get the file position after writing the fixed components.
+            // after we skip to the position to seriaize the actual AlignedSegment
+            // object and serialize it, we'll return the position back to this offset
+            long currentFilePos = out.getFilePointer();
+            long currentAbsoluteSerializedSegmentsOffset = segmentPointersStartingOffset + serializedSegmentsStartingOffset
+                                                           + currentRelativeOffsetToSerializedSegments;
+            out.seek(segmentPointersStartingOffset + serializedSegmentsStartingOffset + currentRelativeOffsetToSerializedSegments);
             AlignedSegment.SERIALIZER.serialize(segment, stream);
+            maxOffsetWritten = out.getFilePointer();
+            // figure out how many bytes we ended up serializing for this AlignedSegment.
+            // we add this to our current relative offset so the next time thru we'll encode
+            // the next element at the correct new offset
+            long bytesSerialized = out.getFilePointer() - currentAbsoluteSerializedSegmentsOffset;
+            currentRelativeOffsetToSerializedSegments += bytesSerialized;
+
+            out.seek(currentFilePos);
+
+            // if we're on the final segment, we also serialize the end offset.
+            // this allows us to calculate the size to deserialize when reading
+            // by determining the size of the final element by calculating the
+            // last element + 1 - last element
+            if (currentSegmentIdx == finishedSegments.size() - 1)
+            {
+                out.writeLong(maxOffsetWritten);
+                out.writeInt(currentRelativeOffsetToSerializedSegments);
+            }
+            currentSegmentIdx++;
         }
+
+        out.seek(maxOffsetWritten);
 
         // the *very* last thing we write is the pointer to the
         // segment pointers.. this way we can look at the end of

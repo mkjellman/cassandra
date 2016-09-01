@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.db.columniterator;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -39,7 +40,7 @@ import org.apache.cassandra.utils.ByteBufferUtil;
  * This is a reader that finds the block for a starting column and returns blocks before/after it for each next call.
  * This function assumes that the CF is sorted by name and exploits the name index.
  */
-class IndexedSliceReader extends AbstractIterator<OnDiskAtom> implements OnDiskAtomIterator
+class IndexedSliceReader extends AbstractIterator<OnDiskAtom> implements OnDiskAtomIterator, Closeable
 {
     private final ColumnFamily emptyColumnFamily;
 
@@ -373,6 +374,8 @@ class IndexedSliceReader extends AbstractIterator<OnDiskAtom> implements OnDiskA
         {
             if (!indexedEntry.hasNext())
             {
+                // todo kjkj tmp
+                indexedEntry.close();
                 return false;
             }
 

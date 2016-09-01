@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.io.util;
 
+import java.io.Closeable;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.File;
@@ -247,7 +248,7 @@ public abstract class SegmentedFile extends SharedCloseableImpl
         public void remove() { throw new UnsupportedOperationException(); }
     }
 
-    public final class SegmentIterator implements Iterator<FileDataInput>
+    public final class SegmentIterator implements Iterator<FileDataInput>, Closeable
     {
         private final PageAlignedReader reader;
         private final long position;
@@ -261,7 +262,7 @@ public abstract class SegmentedFile extends SharedCloseableImpl
                 this.reader = new PageAlignedReader(new File(path));
 
                 // todo: kj we don't want to call this twice..
-                int startingSegmentIdx = reader.getSegmentForOffset(position);
+                int startingSegmentIdx = reader.findIdxForPosition(position);
                 reader.setSegment(startingSegmentIdx);
                 this.nextSegmentIdx = -1;
             } catch (IOException e) {
@@ -276,14 +277,14 @@ public abstract class SegmentedFile extends SharedCloseableImpl
 
         public FileDataInput next()
         {
-            if (nextSegmentIdx >= reader.getSegments().size())
+            if (nextSegmentIdx >= reader.numberOfSegments())
                 throw new NoSuchElementException();
 
             try
             {
                 if (nextSegmentIdx < 0)
                 {
-                    int startingSegmentIdx = reader.getSegmentForOffset(position);
+                    int startingSegmentIdx = reader.findIdxForPosition(position);
                     reader.setSegment(startingSegmentIdx);
                     nextSegmentIdx = startingSegmentIdx + 1;
                 }
