@@ -21,22 +21,25 @@ package org.apache.cassandra.db.index.birch;
 import org.apache.cassandra.io.sstable.SSTableScanner;
 import org.apache.cassandra.io.util.FileDataInput;
 import org.apache.cassandra.io.util.FileMark;
-import org.apache.cassandra.io.util.FileUtils;
 
-import java.io.ByteArrayInputStream;
 import java.io.Closeable;
-import java.io.DataInputStream;
-import java.io.EOFException;
 import java.io.File;
 import java.io.IOException;
-import java.io.RandomAccessFile;
+import java.nio.BufferOverflowException;
+import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
+import java.util.ArrayList;
+import java.util.List;
 
 import com.google.common.collect.AbstractIterator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import static org.apache.cassandra.db.index.birch.PageAlignedWriter.SIZE_FIXED_LENGTH_COMPONENTS_SINGLE_SUB_SEGMENT;
+import static org.apache.cassandra.db.index.birch.PageAlignedWriter.SIZE_SEGMENT_HEADER_SERIALIZATION_OVERHAED;
+import static org.apache.cassandra.db.index.birch.PageAlignedWriter.SIZE_FIXED_LENGTH_COMPONENTS_SINGLE_SEGMENT;
+import static org.apache.cassandra.db.index.birch.PageAlignedWriter.SEGMENT_ONLY_HAS_SINGLE_ALIGNED_SUBSEGMENT;
+import static org.apache.cassandra.db.index.birch.PageAlignedWriter.SEGMENT_ONLY_HAS_SINGLE_NON_ALIGNED_SUBSEGMENT;
 
 /**
  * Reads an aligned and segmented file. Documentation on the
@@ -52,78 +55,180 @@ public class PageAlignedReader implements FileDataInput, Closeable
     private static final Logger logger = LoggerFactory.getLogger(PageAlignedReader.class);
 
     private final File file;
-    private final RandomAccessFile raf;
-    private final FileChannel channel;
-    private final MappedByteBuffer serializedSegmentDescriptorsBuf;
-    private final int totalSegments;
-    private final long maxOffset;
+    private final BufferingPageAlignedReader raf;
 
-    private MappedByteBuffer currentMmappedBuffer = null;
-    private SegmentBounds currentMmappedBufferBounds = new SegmentBounds(0, 0);
-    private AlignedSegment currentSegment = null;
-    private AlignedSubSegment currentSubSegment = null;
+    private int totalSegments;
+    private long serializedDescriptorsStartingOffset;
+    private int relativeOffsetToSerializedAlignedSegmentObjects;
+    private long maxOffset;
+    private int pageAlignedChunkSize;
+
+    private int currentSegmentIdx;
+    private long currentSegmentOffset;
+    private long currentSegmentUsableEndOffset;
+    private long currentSegmentAlignedEndOffset;
+
+    private short currentSubSegmentIdx;
+    private short totalSubSegmentsInCurrentSegment;
+    private long currentSubSegmentOffset;
+    private long currentSubSegmentUsableEndOffset;
+    private long currentSubSegmentAlignedEndOffset;
+    private boolean currentSubSegmentIsPageAligned;
+
+    private Exception closeException = null;
+    private boolean isClosed = false;
 
     public PageAlignedReader(File file) throws IOException
     {
+        this(file, false);
+    }
+
+    private PageAlignedReader(File file, boolean skipSetup) throws IOException
+    {
         this.file = file;
-        this.raf = new RandomAccessFile(file, "r");
-        this.channel = raf.getChannel();
-        raf.seek(raf.length() - Long.BYTES);
-        long serializedDescriptorsStartingOffset = raf.readLong();
-        long serializedSegmentDescriptorsLength = (raf.length() - Long.BYTES) - serializedDescriptorsStartingOffset;
-        this.serializedSegmentDescriptorsBuf = channel.map(FileChannel.MapMode.READ_ONLY, serializedDescriptorsStartingOffset, serializedSegmentDescriptorsLength);
-        this.totalSegments = this.serializedSegmentDescriptorsBuf.getInt();
-        this.serializedSegmentDescriptorsBuf.getInt(); // relative starting offset of serialized segments
-        this.maxOffset = this.serializedSegmentDescriptorsBuf.getLong();
-        raf.seek(0);
+        this.raf = new BufferingPageAlignedReader(file);
+        if (!skipSetup)
+            setup();
+    }
+
+    public static PageAlignedReader copy(PageAlignedReader src) throws IOException
+    {
+        PageAlignedReader newReader = new PageAlignedReader(src.file, true);
+        newReader.totalSegments = src.totalSegments;
+        newReader.serializedDescriptorsStartingOffset = src.serializedDescriptorsStartingOffset;
+        newReader.relativeOffsetToSerializedAlignedSegmentObjects = src.relativeOffsetToSerializedAlignedSegmentObjects;
+        newReader.maxOffset = src.maxOffset;
+        newReader.pageAlignedChunkSize = src.pageAlignedChunkSize;
+
+        newReader.currentSegmentIdx = src.currentSegmentIdx;
+        newReader.currentSegmentOffset = src.currentSegmentOffset;
+        newReader.currentSegmentUsableEndOffset = src.currentSegmentUsableEndOffset;
+        newReader.currentSegmentAlignedEndOffset = src.currentSegmentAlignedEndOffset;
+
+        newReader.currentSubSegmentIdx = src.currentSubSegmentIdx;
+        newReader.totalSubSegmentsInCurrentSegment = src.totalSubSegmentsInCurrentSegment;
+        newReader.currentSubSegmentOffset = src.currentSubSegmentOffset;
+        newReader.currentSubSegmentUsableEndOffset = src.currentSubSegmentUsableEndOffset;
+        newReader.currentSubSegmentAlignedEndOffset = src.currentSubSegmentAlignedEndOffset;
+        newReader.currentSubSegmentIsPageAligned = src.currentSubSegmentIsPageAligned;
+
+        newReader.seek(newReader.currentSubSegmentOffset);
+
+        return newReader;
+    }
+
+    private void setup() throws IOException
+    {
+        seekInternal(raf.length() - Long.BYTES);
+        this.serializedDescriptorsStartingOffset = readLong();
+        seekInternal(serializedDescriptorsStartingOffset);
+        this.totalSegments = readInt();
+        this.relativeOffsetToSerializedAlignedSegmentObjects = readInt(); // relative starting offset of serialized segments
+        this.maxOffset = readLong();
+        this.pageAlignedChunkSize = readInt();
+
+        raf.updateBufferSize(pageAlignedChunkSize);
+
+        setCurrentBoundsForSegment(0, 0);
+
+        seek(0);
+    }
+
+    private void setCurrentBoundsForSegment(AlignedSegment alignedSegment, int subSegmentIdx)
+    {
+        currentSegmentIdx = alignedSegment.idx;
+        currentSegmentOffset = alignedSegment.offset;
+        currentSegmentUsableEndOffset = alignedSegment.offset + alignedSegment.length;
+        currentSegmentAlignedEndOffset = alignedSegment.offset + alignedSegment.alignedLength;
+
+        AlignedSubSegment alignedSubSegment = alignedSegment.getSubSegments().get(subSegmentIdx);
+        currentSubSegmentIdx = alignedSubSegment.idx;
+        totalSubSegmentsInCurrentSegment = (short) alignedSegment.getSubSegments().size();
+        currentSubSegmentOffset = alignedSubSegment.offset;
+        currentSubSegmentUsableEndOffset = alignedSubSegment.offset + alignedSubSegment.length;
+        currentSubSegmentAlignedEndOffset = alignedSubSegment.offset + alignedSubSegment.alignedLength;
+        currentSubSegmentIsPageAligned = alignedSubSegment.isPageAligned;
+    }
+
+    private void setCurrentBoundsForSegment(int segmentIdx, int subSegmentIdx) throws IOException
+    {
+        AlignedSegment alignedSegment = getSegmentPointers(segmentIdx);
+        setCurrentBoundsForSegment(alignedSegment, subSegmentIdx);
+    }
+
+    private AlignedSegment getSegmentPointers(int segmentIdx) throws IOException
+    {
+        long originalOffset = getOffset();
+
+        // skip the fixed components (e.g. total segments, relative offset to variable length stuff, things we need in setup())
+        // and then skip in SIZE_FIXED_LENGTH_COMPONENTS_SINGLE_SEGMENT times the segment we want to get to the start
+        // of the fixed length components serialized for that segment id
+        seekInternal(serializedDescriptorsStartingOffset
+                           + SIZE_SEGMENT_HEADER_SERIALIZATION_OVERHAED
+                           + (SIZE_FIXED_LENGTH_COMPONENTS_SINGLE_SEGMENT * segmentIdx));
+
+        // the starting offset into the file for this segment
+        long segmentOffset = readLong();
+        // the total usable length of all segments (excluding any possible padding for alignment on page boundaries)
+        long totalUsableLength = readLong();
+        // the total length (including any possible padding) of a segment
+        long totalAlignedLength = readLong();
+        // the relative offset to start reading at to deserialize variable length parts for segment's sub-segments
+        int relativeOffsetForThisSegmentsVariableLengthComponents = readInt();
+
+        List<AlignedSubSegment> subSegments = new ArrayList<>();
+        if (relativeOffsetForThisSegmentsVariableLengthComponents == SEGMENT_ONLY_HAS_SINGLE_ALIGNED_SUBSEGMENT
+                || relativeOffsetForThisSegmentsVariableLengthComponents == SEGMENT_ONLY_HAS_SINGLE_NON_ALIGNED_SUBSEGMENT)
+        {
+            // we only have a single sub-segment in this segment, so use the "global" data deserialized
+            // for the segment as the same offsets and length of the "sub-segment"
+            boolean subSegmentIsAligned = relativeOffsetForThisSegmentsVariableLengthComponents == SEGMENT_ONLY_HAS_SINGLE_ALIGNED_SUBSEGMENT;
+            subSegments.add(new AlignedSubSegment((short) 0, segmentOffset, totalUsableLength, totalAlignedLength, subSegmentIsAligned));
+        }
+        else
+        {
+            seekInternal(serializedDescriptorsStartingOffset
+                     + relativeOffsetToSerializedAlignedSegmentObjects
+                     + relativeOffsetForThisSegmentsVariableLengthComponents);
+
+            short totalSubSegments = readShort();
+            long startingOffsetForSubSegmentComponents = getOffset();
+            for (int i = 0; i < totalSubSegments; i++)
+            {
+                seekInternal(startingOffsetForSubSegmentComponents
+                         + (SIZE_FIXED_LENGTH_COMPONENTS_SINGLE_SUB_SEGMENT * i));
+
+                // starting offset for this sub-segment
+                long subSegmentOffset = readLong();
+                // the length of data for this sub-segment (excluding any padding for page alignment)
+                long subSegmentUsableLength = readLong();
+                // the length of the data serialized for this sub-segment including any possible padding for page alignment
+                long subSegmentAlignedLength = readLong();
+                // if the sub-segment was serialized out as page aligned (thus possibly padded to an aligned boundry)
+                boolean subSegmentIsPageAligned = readBoolean();
+                subSegments.add(new AlignedSubSegment((short) i, subSegmentOffset, subSegmentUsableLength,
+                                                      subSegmentAlignedLength, subSegmentIsPageAligned));
+            }
+        }
+
+        // always return the offset for the file pointer on the raf back to the same position
+        // it was in when the method was originally called
+        seekInternal(originalOffset);
+
+        return new AlignedSegment(segmentIdx, segmentOffset, totalUsableLength, totalAlignedLength, subSegments);
     }
 
     protected long getNextAlignedOffset(long offset)
     {
         // if offset <= alignTo, return 0
         // if next aligned offset > offset, return aligned offset - alignTo
-        int alignTo = currentSubSegment.pageChunkSize;
+        int alignTo = pageAlignedChunkSize;
         if (alignTo == 0 || offset == alignTo)
             return offset;
         if (offset <= alignTo)
             return 0;
         long alignedOffset = (offset + alignTo - 1) & ~(alignTo - 1);
         return (alignedOffset > offset) ? alignedOffset - alignTo : alignedOffset;
-    }
-
-    /**
-     * @param idx the index of the aligned segment to deserialize
-     * @return the deserialized AlignedSegment
-     * @throws IOException thrown if an IO Error occurs while deserializing the AlignedSegment
-     */
-    private AlignedSegment getAlignedSegmentAtIdx(int idx) throws IOException
-    {
-        serializedSegmentDescriptorsBuf.position(0);
-
-        serializedSegmentDescriptorsBuf.getInt(); // total number of serialized aligned segments
-        int serializedObjectsStartingOffset = serializedSegmentDescriptorsBuf.getInt();
-
-        serializedSegmentDescriptorsBuf.position(Integer.BYTES + Integer.BYTES + Long.BYTES + (idx * (Long.BYTES + Integer.BYTES)));
-        serializedSegmentDescriptorsBuf.getLong(); // starting offset of this idx's segment in the file
-        int relativeOffsetToSerializedSegment = serializedSegmentDescriptorsBuf.getInt();
-        serializedSegmentDescriptorsBuf.getLong(); // starting offset of idx+1's segment in the file
-        int nextIdxRelativeOffsetToSerializedSegment = serializedSegmentDescriptorsBuf.getInt();
-        // calculate the serialized size of the AlignedSegment by subtracting the start of idx + 1 from the start of idx
-        int serializedLengthOfSegment = nextIdxRelativeOffsetToSerializedSegment - relativeOffsetToSerializedSegment;
-
-        // move the position of the backing memory-mapped to the starting offset for this serialized segment
-        serializedSegmentDescriptorsBuf.position(serializedObjectsStartingOffset + relativeOffsetToSerializedSegment);
-        // read the calculated number of bytes (serializedLengthOfSegment) from the memory-mapped segment
-        byte[] serializedSegmentBytes = new byte[serializedLengthOfSegment];
-        serializedSegmentDescriptorsBuf.get(serializedSegmentBytes);
-        // deserialize the AlignedSegment object and return it.
-        AlignedSegment alignedSegment;
-        try (ByteArrayInputStream bais = new ByteArrayInputStream(serializedSegmentBytes))
-        {
-            alignedSegment = AlignedSegment.SERIALIZER.deserialize(new DataInputStream(bais));
-        }
-
-        return alignedSegment;
     }
 
     /**
@@ -135,11 +240,24 @@ public class PageAlignedReader implements FileDataInput, Closeable
     }
 
     /**
+     * @return ttal number of aligned sub-segments in the current segment
+     */
+    public short numberOfSubSegments()
+    {
+        return totalSubSegmentsInCurrentSegment;
+    }
+
+    /**
      * @return a new instance of AlignedSegmentIterator
      */
     public AlignedSegmentIterator getSegmentIterator()
     {
         return new AlignedSegmentIterator();
+    }
+
+    public AlignedSegmentIterator getSegmentIterator(int startingSegment)
+    {
+        return new AlignedSegmentIterator(startingSegment);
     }
 
     /**
@@ -148,7 +266,17 @@ public class PageAlignedReader implements FileDataInput, Closeable
      */
     public class AlignedSegmentIterator extends AbstractIterator<AlignedSegment>
     {
-        int currentSegment = 0;
+        private int currentSegment;
+
+        public AlignedSegmentIterator(int startingSegment)
+        {
+            this.currentSegment = startingSegment;
+        }
+
+        public AlignedSegmentIterator()
+        {
+            this.currentSegment = 0;
+        }
 
         @Override
         public AlignedSegment computeNext()
@@ -160,11 +288,12 @@ public class PageAlignedReader implements FileDataInput, Closeable
 
             try
             {
-                return getAlignedSegmentAtIdx(currentSegment++);
+                return getSegmentPointers(currentSegment++);
             }
             catch (IOException e)
             {
-                logger.error("Failed to deserialize aligned segment [idx {}] from {}", currentSegment, file.getAbsolutePath());
+                logger.error("Failed to deserialize aligned segment [idx {} of {}] from {}", currentSegment,
+                             totalSegments, file.getAbsolutePath());
                 throw new RuntimeException(e);
             }
         }
@@ -179,74 +308,43 @@ public class PageAlignedReader implements FileDataInput, Closeable
     {
         assert segmentId < totalSegments;
 
-        AlignedSegment segment = getAlignedSegmentAtIdx(segmentId);
-        currentSegment = segment;
-        currentSubSegment = segment.getSubSegments().get(subSegmentId);
-        seek(currentSubSegment.offset);
-        setCurrentMmappedBuffer();
+        setCurrentBoundsForSegment(segmentId, subSegmentId);
+        seek(currentSubSegmentOffset);
     }
 
     public void nextSubSegment() throws IOException
     {
-        setSegment(currentSegment.idx, currentSubSegment.idx + 1);
+        setSegment(currentSegmentIdx, currentSubSegmentIdx + 1);
     }
 
     public boolean hasNextSubSegment()
     {
-        return currentSubSegment.idx + 1 < currentSegment.getSubSegments().size();
+        return currentSubSegmentIdx + 1 < totalSubSegmentsInCurrentSegment;
     }
 
     public boolean hasNextSegment()
     {
-        return currentSegment.idx + 1 < totalSegments;
+        return currentSegmentIdx + 1 < totalSegments;
     }
 
     public boolean hasPreviousSegment()
     {
-        return currentSegment.idx - 1 >= 0;
+        return currentSegmentIdx - 1 >= 0;
     }
 
     public void previousSegment() throws IOException
     {
-        setSegment(currentSegment.idx - 1);
+        setSegment(currentSegmentIdx - 1);
     }
 
     public void nextSegment() throws IOException
     {
-        setSegment(currentSegment.idx + 1);
-    }
-
-    private void setCurrentMmappedBuffer() throws IOException
-    {
-        if (currentSubSegment.shouldUseSingleMmappedBuffer())
-        {
-            assert currentSubSegment.alignedLength < ((1 << 21) - 1); //2GB max mmap-able size
-            maybeFreeCurrentMmappedBuffer();
-            currentMmappedBuffer = channel.map(FileChannel.MapMode.READ_ONLY, raf.getFilePointer(), currentSubSegment.length);
-            currentMmappedBufferBounds = new SegmentBounds(currentSubSegment.offset, currentSubSegment.offset + currentSubSegment.alignedLength - 1);
-        }
-        else
-        {
-            long lengthToMap = (raf.length() - raf.getFilePointer() < currentSubSegment.pageChunkSize) ? raf.length() - raf.getFilePointer() : currentSubSegment.pageChunkSize;
-            maybeFreeCurrentMmappedBuffer();
-            currentMmappedBuffer = channel.map(FileChannel.MapMode.READ_ONLY, raf.getFilePointer(), lengthToMap);
-            currentMmappedBufferBounds = new SegmentBounds(raf.getFilePointer(), raf.getFilePointer() + (currentSubSegment.pageChunkSize - 1));
-        }
-    }
-
-    public MappedByteBuffer getMmappedBuffer(long fileOffset, int length) throws IOException
-    {
-        return channel.map(FileChannel.MapMode.READ_ONLY, fileOffset, length);
-    }
-
-    protected int getCurrentInternalBufferPosition()
-    {
-        return currentMmappedBuffer.position();
+        setSegment(currentSegmentIdx + 1);
     }
 
     public long getOffset() throws IOException
     {
-        return raf.getFilePointer() + currentMmappedBuffer.position();
+        return raf.getPosition();
     }
 
     public String getPath()
@@ -256,20 +354,58 @@ public class PageAlignedReader implements FileDataInput, Closeable
 
     public boolean isEOF() throws IOException
     {
-        boolean isOutOfSegments = currentSegment.idx + 1 >= totalSegments;
-        boolean isOutOfSubSegments = currentSubSegment.idx + 1 >= currentSegment.getSubSegments().size();
-        boolean currentSubSegmentExausted = raf.getFilePointer() + currentMmappedBuffer.position() >= currentSubSegment.getEndOffset();
+        boolean isOutOfSegments = currentSegmentIdx + 1 >= totalSegments;
+        boolean isOutOfSubSegments = currentSubSegmentIdx + 1 >= totalSubSegmentsInCurrentSegment;
+        boolean currentSubSegmentExausted = getOffset() >= currentSubSegmentUsableEndOffset;
         return isOutOfSegments && isOutOfSubSegments && currentSubSegmentExausted;
     }
 
     public boolean isCurrentSegmentExausted() throws IOException
     {
-        return raf.getFilePointer() + currentMmappedBuffer.position() >= currentSubSegment.getEndOffset();
+        return getOffset() >= currentSegmentUsableEndOffset;
+    }
+
+    public boolean isPositionInsideCurrentSegment(long pos)
+    {
+        return pos >= currentSegmentOffset && pos <= currentSegmentAlignedEndOffset;
+    }
+
+    public boolean isPositionInsideCurrentSubSegment(long pos)
+    {
+        return pos >= currentSubSegmentOffset && pos <= currentSubSegmentAlignedEndOffset;
     }
 
     public long bytesRemaining() throws IOException
     {
-        return currentSegment.length - currentMmappedBuffer.position();
+        return currentSegmentAlignedEndOffset - getOffset();
+    }
+
+    private void findAndSetCurrentSegmentAndSubSegmentForPosition(long pos) throws IOException
+    {
+        // given input position not within the current segment, so
+        // binary search for the segment that contains the input position
+        int segmentIdxContainingPos = findIdxForPosition(pos);
+        setCurrentSubSegmentForPositionWithKnownSegmentIdx(pos, segmentIdxContainingPos);
+    }
+
+    private void setCurrentSubSegmentForPositionWithKnownSegmentIdx(long pos, int segmentIdx) throws IOException
+    {
+        AlignedSegment alignedSegment = getSegmentPointers(segmentIdx);
+
+        int subSegmentIdx = 0;
+        if (alignedSegment.getSubSegments().size() > 1)
+        {
+            for (AlignedSubSegment subSegment : alignedSegment.getSubSegments())
+            {
+                if (subSegment.isPositionInSubSegment(pos))
+                {
+                    subSegmentIdx = subSegment.idx;
+                    break;
+                }
+            }
+        }
+
+        setCurrentBoundsForSegment(alignedSegment, subSegmentIdx);
     }
 
     /**
@@ -289,29 +425,18 @@ public class PageAlignedReader implements FileDataInput, Closeable
     {
         assert pos >= 0 && pos <= maxOffset;
 
-        if (pos < currentSegment.offset || pos > currentSegment.endOffset)
+        if (pos < currentSegmentOffset || pos > currentSegmentUsableEndOffset)
         {
-            int segmentIdxContainingPos = findIdxForPosition(pos);
-            AlignedSegment segmentForPos = getAlignedSegmentAtIdx(segmentIdxContainingPos);
-            currentSegment = segmentForPos;
-            currentSubSegment = segmentForPos.getSubSegments().get(0);
+            findAndSetCurrentSegmentAndSubSegmentForPosition(pos);
+            seek(pos);
         }
 
-        if (pos > currentSubSegment.getEndOffset() || pos < currentSubSegment.offset && (pos >= currentSegment.offset && pos <= currentSegment.endOffset))
+        if (pos > currentSubSegmentUsableEndOffset || pos < currentSubSegmentOffset
+                                                        && (pos >= currentSegmentOffset && pos <= currentSegmentUsableEndOffset))
         {
-            for (int i = currentSubSegment.idx + 1; i < currentSegment.getSubSegments().size(); i++)
-            {
-                AlignedSubSegment subSegment = currentSegment.getSubSegments().get(i);
-                if (pos >= subSegment.offset && pos <= subSegment.getEndOffset())
-                {
-                    currentSubSegment = subSegment;
-                    break;
-                }
-            }
+            setCurrentSubSegmentForPositionWithKnownSegmentIdx(pos, currentSegmentIdx);
+            seek(pos);
         }
-
-        setCurrentMmappedBuffer();
-        seek(pos);
     }
 
     /**
@@ -327,25 +452,26 @@ public class PageAlignedReader implements FileDataInput, Closeable
         if (pos > maxOffset)
             throw new IOException("Invalid Position Provided. pos " + pos + " > maxOffset " + maxOffset);
 
-        serializedSegmentDescriptorsBuf.position(0);
+        // optimization to avoid doing any of this work at all for pos 0
+        if (pos == 0)
+            return 0;
 
-        int entries = serializedSegmentDescriptorsBuf.getInt();
-        int serializedObjectsStartingOffset = serializedSegmentDescriptorsBuf.getInt();
-        long endFileOffsetOfLastSegment = serializedSegmentDescriptorsBuf.getLong();
+        long markedPos = getOffset();
 
-        long ret = -1;
         int retIdx = -1;
 
         int start = 0;
-        int end = entries - 1; // binary search is zero-indexed
+        int end = totalSegments - 1; // binary search is zero-indexed
         int middle = (end - start) / 2;
 
         while (start <= end)
         {
-            serializedSegmentDescriptorsBuf.position((middle * (Long.BYTES + Integer.BYTES)) + Integer.BYTES + Integer.BYTES + Long.BYTES);
+            // skip to the start of the fixed serialized components for the current 'middle' element
+            seekInternal(serializedDescriptorsStartingOffset
+                     + SIZE_SEGMENT_HEADER_SERIALIZATION_OVERHAED
+                     + (middle * SIZE_FIXED_LENGTH_COMPONENTS_SINGLE_SEGMENT));
 
-            long offset = serializedSegmentDescriptorsBuf.getLong();
-            int offsetToSerializedSegment = serializedSegmentDescriptorsBuf.getInt();
+            long offset = readLong();
 
             int cmp = Long.compare(offset, pos);
             if (cmp == 0)
@@ -355,7 +481,6 @@ public class PageAlignedReader implements FileDataInput, Closeable
 
             if (cmp < 0)
             {
-                ret = offset;
                 retIdx = middle;
                 start = middle + 1;
             }
@@ -366,50 +491,68 @@ public class PageAlignedReader implements FileDataInput, Closeable
             middle = (start + end) / 2;
         }
 
+        seek(markedPos);
+
         return retIdx;
+    }
+
+    private void seekInternal(long pos) throws IOException
+    {
+        raf.seek(pos);
     }
 
     public void seek(long pos) throws IOException
     {
-        // the position provided to seek should be within the bounds of the current segment/subSegment.
-        // this ensures that we don't need to check if we need to randomly re-mmap a region of the file
-        // from a different segment (which is expensive as the position is not guarenteed to be at the
-        // start or end of the segment, so the only way to determine the segment is to iterate thru all
-        // segment and subsegments until a bounds check matches the requested position). So, to avoid
-        // this, callers are responsible for updating the current segment/subSegment to one that
-        // contains the resired position, prior to calling seek.
-        assert pos >= 0 && pos >= currentSubSegment.offset && pos <= currentSubSegment.getEndOffset();
+        assert pos >= 0 && pos >= currentSubSegmentOffset && pos <= currentSubSegmentAlignedEndOffset;
 
-        long alignedSegmentOffset = getNextAlignedOffset(pos);
-        if (currentMmappedBuffer != null && currentMmappedBufferBounds.offsetWithinBounds(pos))
-        {
-            int relativeOffset = (int) (pos - alignedSegmentOffset);
-            currentMmappedBuffer.position(relativeOffset);
-        }
-        else
-        {
-            channel.position(alignedSegmentOffset);
-            setCurrentMmappedBuffer();
-            int relativeOffset = (int) (pos - alignedSegmentOffset);
-            currentMmappedBuffer.position(relativeOffset);
-        }
+        raf.seek(pos);
     }
 
-    public AlignedSegment getCurrentSegment()
+    public void seekToStartOfCurrentSubSegment() throws IOException
     {
-        return currentSegment;
+        seek(currentSubSegmentOffset);
     }
 
-    public AlignedSubSegment getCurrentSubSegment()
+    public void seekToEndOfCurrentSubSegment() throws IOException
     {
-        return currentSubSegment;
+        seek(currentSubSegmentAlignedEndOffset);
+    }
+
+    public void seekToEndOfCurrentSegment() throws IOException
+    {
+        seek(currentSegmentAlignedEndOffset);
+    }
+
+    public int getCurrentSegmentIdx()
+    {
+        return currentSegmentIdx;
+    }
+
+    public short getCurrentSubSegmentIdx()
+    {
+        return currentSubSegmentIdx;
+    }
+
+    public boolean isCurrentSubSegmentPageAligned()
+    {
+        return currentSubSegmentIsPageAligned;
+    }
+
+    public long getCurrentSubSegmentAlignedEndOffset()
+    {
+        return currentSubSegmentAlignedEndOffset;
+    }
+
+    public int getPageAlignedChunkSize()
+    {
+        return pageAlignedChunkSize;
     }
 
     public FileMark mark()
     {
         try
         {
-            return new PageAlignedFileMark(raf.getFilePointer(), currentMmappedBuffer.position());
+            return new PageAlignedFileMark(getOffset(), 0, currentSegmentIdx, currentSubSegmentIdx);
         }
         catch (IOException e)
         {
@@ -420,9 +563,9 @@ public class PageAlignedReader implements FileDataInput, Closeable
     public void reset(FileMark mark) throws IOException
     {
         PageAlignedFileMark alignedMark = (PageAlignedFileMark) mark;
-        channel.position(alignedMark.rafPointer);
-        findAndSetSegmentAndSubSegmentCurrentForPosition(alignedMark.getSyntheticPointer());
-        seek(alignedMark.getSyntheticPointer());
+        if (!isPositionInsideCurrentSubSegment(alignedMark.rafPointer))
+            setCurrentBoundsForSegment(alignedMark.currentSegmentIdx, alignedMark.currentSubSegmentIdx);
+        seek(alignedMark.rafPointer);
     }
 
     public long bytesPastMark(FileMark mark)
@@ -434,7 +577,7 @@ public class PageAlignedReader implements FileDataInput, Closeable
     {
         try
         {
-            return channel.position();
+            return getOffset();
         }
         catch (IOException e)
         {
@@ -452,74 +595,82 @@ public class PageAlignedReader implements FileDataInput, Closeable
     public ByteBuffer readBytes(int length) throws IOException
     {
         byte[] buf = new byte[length];
-        currentMmappedBuffer.get(buf);
+        try
+        {
+            raf.read(buf);
+        }
+        catch (BufferUnderflowException | BufferOverflowException e)
+        {
+            logger.error("Something bad happened reading from the current mmapped buffer with length {}.. current state of this PageAlignedReader: [{}]", length, toString(), e);
+            throw e;
+        }
         return ByteBuffer.wrap(buf);
+    }
+
+    public Exception getCloseException()
+    {
+        return closeException;
     }
 
     @Override
     public void close() throws IOException
     {
-        /*
-         * Try forcing the unmapping of segments using undocumented unsafe sun APIs.
-         * If this fails (non Sun JVM), we'll have to wait for the GC to finalize the mapping.
-         * If this works and a thread tries to access any segment, hell will unleash on earth.
-         */
-        maybeFreeCurrentMmappedBuffer();
+        if (isClosed)
+            return;
 
-        if (FileUtils.isCleanerAvailable())
+        // tmp kjkj: capture stack when close() is called so
+        // when a caller incorrectly operates on this same instance after
+        // it has already been closed we can know who closed it originally..
+        try
         {
-            if (serializedSegmentDescriptorsBuf != null)
-                FileUtils.clean(serializedSegmentDescriptorsBuf);
+            throw new Exception();
+        }
+        catch (Exception e)
+        {
+            closeException = e;
         }
 
-        channel.close();
+        isClosed = true;
+
         raf.close();
     }
 
-    private void maybeFreeCurrentMmappedBuffer()
+    public boolean isClosed()
     {
-        if (FileUtils.isCleanerAvailable())
-        {
-            if (currentMmappedBuffer != null)
-            {
-                FileUtils.clean(currentMmappedBuffer);
-                currentMmappedBuffer = null;
-            }
-        }
+        return isClosed;
     }
 
     @Override
     public void readFully(byte[] b) throws IOException
     {
-        throw new UnsupportedOperationException();
+        raf.readFully(b);
     }
 
     @Override
     public void readFully(byte[] b, int off, int len) throws IOException
     {
-        throw new UnsupportedOperationException();
+        raf.readFully(b, off, len);
     }
 
     @Override
     public int skipBytes(int n) throws IOException
     {
-        long offsetAfterSkip = raf.getFilePointer() + n;
-        assert offsetAfterSkip <= currentSegment.endOffset;
+        long offsetAfterSkip = getOffset() + n;
+        assert offsetAfterSkip <= currentSegmentAlignedEndOffset;
         seek(offsetAfterSkip);
-        setCurrentMmappedBuffer();
         return n;
     }
 
     @Override
     public boolean readBoolean() throws IOException
     {
-        return ((int) currentMmappedBuffer.get()) == 1;
+        return ((int) raf.readByte()) == 1;
     }
 
     @Override
     public byte readByte() throws IOException
     {
-        return currentMmappedBuffer.get();
+        return raf.readByte();
     }
 
     @Override
@@ -531,47 +682,47 @@ public class PageAlignedReader implements FileDataInput, Closeable
     @Override
     public short readShort() throws IOException
     {
-        return currentMmappedBuffer.getShort();
+        return raf.readShort();
     }
 
     @Override
     public int readUnsignedShort() throws IOException
     {
-        int ch1 = currentMmappedBuffer.get();
-        int ch2 = currentMmappedBuffer.get();
+        int ch1 = readByte() & 0xFF;
+        int ch2 = readByte() & 0xFF;
         if ((ch1 | ch2) < 0)
-            throw new EOFException();
-        return (ch1 << 8) + (ch2 << 0);
+            throw new IOException("Failed to read unsigned short as deserialized value is bogus/negative");
+        return (ch1 << 8) + (ch2);
     }
 
     @Override
     public char readChar() throws IOException
     {
-        return currentMmappedBuffer.getChar();
+        return raf.readChar();
     }
 
     @Override
     public int readInt() throws IOException
     {
-        return currentMmappedBuffer.getInt();
+        return raf.readInt();
     }
 
     @Override
     public long readLong() throws IOException
     {
-        return currentMmappedBuffer.getLong();
+        return raf.readLong();
     }
 
     @Override
     public float readFloat() throws IOException
     {
-        return currentMmappedBuffer.getFloat();
+        return raf.readFloat();
     }
 
     @Override
     public double readDouble() throws IOException
     {
-        return currentMmappedBuffer.getDouble();
+        return raf.readDouble();
     }
 
     @Override
@@ -584,40 +735,5 @@ public class PageAlignedReader implements FileDataInput, Closeable
     public String readUTF() throws IOException
     {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public String toString()
-    {
-        try
-        {
-            return String.format("totalSegments: %s raf.getFilePointer(): %s currentMmappedBuffer.position(): " +
-                                 "%s currentSegment: %s currentSubSegment: %s", totalSegments,
-                                 raf.getFilePointer(),
-                                 (currentMmappedBuffer == null) ? -1 : currentMmappedBuffer.position(),
-                                 (currentSegment == null) ? "null" : currentSegment.toString(),
-                                 (currentSubSegment == null) ? "null" : currentSubSegment.toString());
-        }
-        catch (IOException e)
-        {
-            return String.format("Failed to stringify PageAlignedReader because %s", e.getCause().getMessage());
-        }
-    }
-
-    public static class SegmentBounds
-    {
-        public final long startOffset;
-        public final long endOffset;
-
-        public SegmentBounds(long startOffset, long endOffset)
-        {
-            this.startOffset = startOffset;
-            this.endOffset = endOffset;
-        }
-
-        public boolean offsetWithinBounds(long offset)
-        {
-            return offset >= startOffset && offset <= endOffset;
-        }
     }
 }

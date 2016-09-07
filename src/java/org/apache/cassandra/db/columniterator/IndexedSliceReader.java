@@ -85,7 +85,7 @@ class IndexedSliceReader extends AbstractIterator<OnDiskAtom> implements OnDiskA
             }
             else
             {
-                indexEntry.reset(reversed, 0); //tmp kjkjk
+                indexEntry.reset(reversed);
                 emptyColumnFamily.delete(indexEntry.deletionTime());
                 fetcher = new IndexedBlockFetcher(indexEntry.getPosition());
             }
@@ -153,7 +153,7 @@ class IndexedSliceReader extends AbstractIterator<OnDiskAtom> implements OnDiskA
     {
         if (originalInput == null && file != null)
             file.close();
-        indexedEntry.close(); // todo: kjkj is this the right place to close?
+        indexedEntry.close();
     }
 
     protected void addColumn(OnDiskAtom col)

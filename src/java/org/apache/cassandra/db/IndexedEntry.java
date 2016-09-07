@@ -45,7 +45,7 @@ public interface IndexedEntry extends IMeasurableMemory, Iterator<IndexInfo>
 
     void startIteratorAt(Composite name, CellNameType comparator, boolean reversed) throws IOException;
 
-    void reset(boolean reversed, long position);
+    void reset(boolean reversed);
 
     void close();
 
@@ -128,7 +128,7 @@ public interface IndexedEntry extends IMeasurableMemory, Iterator<IndexInfo>
                     DeletionTime deletionTime = DeletionTime.serializer.deserialize(in);
                     reader.nextSubSegment();
                     IndexedEntry entry = new BirchIndexedEntry(position, type, reader, deletionTime);
-                    reader.seek(reader.getCurrentSubSegment().getEndOffset());
+                    reader.seekToEndOfCurrentSubSegment();
                     return entry;
                 }
                 else
@@ -168,23 +168,23 @@ public interface IndexedEntry extends IMeasurableMemory, Iterator<IndexInfo>
                 // todo: kjkj can this be cleaned up/simplified? e.g. i think the logic should/could be,
                 // always set to start of next segment unless current segment is the last segment, in
                 // which case seek to the end of the current segment
-                if (reader.getCurrentSegment().idx == reader.numberOfSegments() - 1)
+                if (reader.getCurrentSegmentIdx() == reader.numberOfSegments() - 1)
                 {
                     // if the current sub-segment is the last available sub-segment (and current is the last segment)
                     // seek to the end of the sub-segment to ensure isEOF will return true regardless of iteration order
-                    if (reader.getCurrentSubSegment().idx == reader.getCurrentSegment().getSubSegments().size() - 1)
+                    if (reader.getCurrentSubSegmentIdx() == reader.numberOfSubSegments() - 1)
                     {
-                        reader.seek(reader.getCurrentSegment().getLastSubSegment().getEndOffset());
+                        reader.seekToEndOfCurrentSegment();
                     }
                     else
                     {
                         // skip to the beginning of the next sub-segment
-                        reader.setSegment(reader.getCurrentSubSegment().idx, reader.getCurrentSubSegment().idx + 1);
+                        reader.setSegment(reader.getCurrentSegmentIdx(), reader.getCurrentSubSegmentIdx() + 1);
                     }
                 }
                 else
                 {
-                    reader.setSegment(reader.getCurrentSegment().idx + 1);
+                    reader.setSegment(reader.getCurrentSegmentIdx() + 1);
                 }
             }
             else

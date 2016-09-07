@@ -40,9 +40,11 @@ public class IndexInfo implements TreeSerializable
     public static final IndexInfoSerializer SERIALIZER = new IndexInfoSerializer();
 
     public final long width;
-    public final Composite lastName;
     public final Composite firstName;
+    public final Composite lastName;
     public final long offset;
+
+    private ByteBuffer firstNameBuf = null;
 
     public IndexInfo(Composite firstName, Composite lastName, long offset, long width)
     {
@@ -92,9 +94,10 @@ public class IndexInfo implements TreeSerializable
     }
 
     public ByteBuffer serializedKey(CType type) {
-        ByteBuffer key = firstName.toByteBuffer().duplicate();
-        key.position(0);
-        return key;
+        if (firstNameBuf == null)
+            firstNameBuf = firstName.toByteBuffer().duplicate();
+
+        return firstNameBuf.duplicate();
     }
 
     public void serializeValue(PageAlignedWriter writer) throws IOException {
@@ -102,7 +105,8 @@ public class IndexInfo implements TreeSerializable
     }
 
     public int serializedKeySize(CType type) {
-        return serializedKey(type).capacity();
+        ByteBuffer key = serializedKey(type);
+        return key.limit() - key.position();
     }
 
     public int serializedValueSize() {

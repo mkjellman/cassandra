@@ -97,8 +97,11 @@ public class PageAlignedReaderTest
 
             try (PageAlignedReader reader = new PageAlignedReader(tmpFile))
             {
-                int segment = reader.findIdxForPosition((4096 * 2) + 2);
-                Assert.assertEquals(2, segment);
+                int segment1 = reader.findIdxForPosition(0);
+                Assert.assertEquals(0, segment1);
+
+                int segment2 = reader.findIdxForPosition((4096 * 2) + 2);
+                Assert.assertEquals(2, segment2);
             }
         }
         finally

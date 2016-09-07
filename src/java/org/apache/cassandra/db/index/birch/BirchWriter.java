@@ -263,8 +263,7 @@ public class BirchWriter<T>
             Node inProgressInnerNode = new Node(type, serializer, maxKeyLengthWithoutOverflow, cacheLineSize, overflow);
             for (Node node : sourceLevel)
             {
-                // reset key ByteBuffer back to 0 every time!
-                node.getElementToPromote().getTreeSerializable().serializedKey(type).position(0);
+                node.getElementToPromote().getTreeSerializable().serializedKey(type);
 
                 if (!inProgressInnerNode.hasCapacity(node.getElementToPromote().getTreeSerializable()))
                 {

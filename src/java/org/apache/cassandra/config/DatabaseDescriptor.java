@@ -352,7 +352,7 @@ public class DatabaseDescriptor
             }
             else
             {
-                indexAccessMode = conf.disk_access_mode;
+                indexAccessMode = mmap_cache_aligned;
                 logger.info("DiskAccessMode is {}, indexAccessMode is {}", conf.disk_access_mode, indexAccessMode);
             }
         }

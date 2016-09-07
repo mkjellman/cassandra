@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.io.util.DataOutputStreamAndChannel;
 
@@ -35,6 +36,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.utils.ByteBufferUtil;
+import org.apache.cassandra.utils.CLibrary;
 
 /**
  * <strong>1.1. Page Aligned File Format</strong>
@@ -157,14 +159,39 @@ public class PageAlignedWriter implements WritableByteChannel
 {
     private static final Logger logger = LoggerFactory.getLogger(PageAlignedWriter.class);
 
-    public static final int SEGMENT_NOT_PAGE_ALIGNED = 0;
+    // calculate the "relative" starting offset where we'll serialize the variable length sub-segment
+    // data for each segment (if the segment has more than 1 sub segemnt)
+    public static final int SIZE_SEGMENT_HEADER_SERIALIZATION_OVERHAED = Integer.BYTES // number of segments
+                                                                         + Integer.BYTES // relative offset to start of serialized sub-segment info
+                                                                         + Long.BYTES // max aligned end offset of final segment
+                                                                         + Integer.BYTES; // the alignment size used to serialize this page aligned file
+
+    public static final int SIZE_FIXED_LENGTH_COMPONENTS_SINGLE_SEGMENT = Long.BYTES // segment offset
+                                                                          + Long.BYTES // usable length of segment
+                                                                          + Long.BYTES // aligned length of segment
+                                                                          + Integer.BYTES; // relative offset to segment's sub-segment serialized info
+
+    public static final int SIZE_SUB_SEGMENT_HEADER_SERIALIZATION_OVERHEAD = Short.BYTES; // the number of sub-segments
+
+    public static final int SIZE_FIXED_LENGTH_COMPONENTS_SINGLE_SUB_SEGMENT = Long.BYTES // starting offset for this sub-segment
+                                                                              + Long.BYTES // the length of data for this sub-segment (excluding any padding for page alignment)
+                                                                              + Long.BYTES // the length of the data serialized for this sub-segment including any possible padding for page alignment
+                                                                              + Byte.BYTES;  // if the sub-segment was serialized out as page aligned (thus possibly padded to an aligned boundry)
+
+    public static final int SEGMENT_ONLY_HAS_SINGLE_ALIGNED_SUBSEGMENT = -1;
+    public static final int SEGMENT_ONLY_HAS_SINGLE_NON_ALIGNED_SUBSEGMENT = -2;
+    private static final int SEGMENT_NOT_PAGE_ALIGNED = 0;
 
     public final DataOutputPlus stream; // stream is eventually flushed and written to out
     private final RandomAccessFile out; // out contains the aligned data written to stream
     private final String filePath;
+    private int directoryFD;
+    // directory should be synced only after first file sync, in other words, only once per file
+    private boolean directorySynced = false;
+    private boolean writerClosed = false;
 
-    protected Runnable runPostFlush;
-    protected long lastFlushOffset;
+    private Runnable runPostFlush;
+    private long lastFlushOffset;
 
     private long currentSegmentStartOffset;
     private long currentSubSegmentStartOffset;
@@ -175,6 +202,10 @@ public class PageAlignedWriter implements WritableByteChannel
     private List<AlignedSubSegment> finishedSubSegments;
 
     private final List<AlignedSegment> finishedSegments;
+
+    // lazily instantiated reusable buffer
+    private byte[] buf = null;
+    private static final int BUF_SIZE = 1024;
 
     public PageAlignedWriter(File file)
     {
@@ -188,6 +219,8 @@ public class PageAlignedWriter implements WritableByteChannel
         {
             throw new RuntimeException(e);
         }
+
+        this.directoryFD = CLibrary.tryOpenDirectory(file.getParent());
 
         this.finishedSegments = new ArrayList<>();
     }
@@ -274,6 +307,10 @@ public class PageAlignedWriter implements WritableByteChannel
 
         this.finishedSubSegments = null;
         this.segmentInProgress = false;
+
+        lastFlushOffset = out.length();
+
+        maybeFsyncParentDirectory();
     }
 
     public void finalizeCurrentSubSegment() throws IOException
@@ -294,8 +331,8 @@ public class PageAlignedWriter implements WritableByteChannel
         // for this given subSegment)
         assert subSegmentLength <= alignedSubSegmentLength;
 
-        finishedSubSegments.add(new AlignedSubSegment(finishedSubSegments.size(), currentSubSegmentStartOffset, subSegmentLength,
-                                                      alignedSubSegmentLength, currentSubSegmentPageBlockSize));
+        finishedSubSegments.add(new AlignedSubSegment((short) finishedSubSegments.size(), currentSubSegmentStartOffset, subSegmentLength,
+                                                      alignedSubSegmentLength, currentSubSegmentPageBlockSize != SEGMENT_NOT_PAGE_ALIGNED));
 
         subSegmentInProgress = false;
     }
@@ -321,66 +358,94 @@ public class PageAlignedWriter implements WritableByteChannel
         // make sure starting offset of segments is aligned on a good boundary..
         assert ((segmentPointersStartingOffset % alignTo()) == 0);
 
+        // if for instance, abort() is called from SSTableWriter for whatever reason,
+        // we might not have ever added any segments. For now bail out
+        // and don't serialize anything. .. this will produce a corrupted
+        // file of course and so we shuold most likely truncate the current file
+        // ourselves and make sure the PageAlignedReader rejects files with no length so
+        // we don't need to rely on SSTableWriter (for example) always cleaning up and doing
+        // the "right" thing
+        if (finishedSegments.isEmpty())
+            return;
+
         // first, serialize the total number of segments we're going to serialize
         out.writeInt(finishedSegments.size());
 
-        // calculate the "relative" starting offset where we'll serialize the full variable
-        // length segments
-        int serializedSegmentsStartingOffset = Integer.BYTES + Integer.BYTES + Long.BYTES + ((Long.BYTES + Integer.BYTES) * (finishedSegments.size() + 1));
-        out.writeInt(serializedSegmentsStartingOffset);
+        // we do finishedSegments.size() + 1 as we calculate the length on the fly
+        // at read time by using the current element + current elenent + 1 to avoid eating the serialization cost
+        int variableLengthSubSegmentsStartingOffset = SIZE_SEGMENT_HEADER_SERIALIZATION_OVERHAED
+                                               + (SIZE_FIXED_LENGTH_COMPONENTS_SINGLE_SEGMENT * finishedSegments.size());
+        out.writeInt(variableLengthSubSegmentsStartingOffset);
 
         // write out the maximum aligned end offset of the final segment.
         // this allows us to guard against bogus reader requests on deserialization
-        // without needing to deserialize the entire final segment first to get this
-        // value
-        out.writeLong(finishedSegments.get(finishedSegments.size() - 1).alignedEndOffset);
+        // without needing to deserialize the entire final segment first to get this value
+        AlignedSegment lastSegment = finishedSegments.get(finishedSegments.size() - 1);
+        out.writeLong(lastSegment.offset + lastSegment.alignedLength);
+
+        // write out the alignment size used to serialize segments in this file
+        out.writeInt(alignTo());
 
         int currentRelativeOffsetToSerializedSegments = 0;
-        long maxOffsetWritten = 0;
-
-        int currentSegmentIdx = 0;
         for (AlignedSegment segment : finishedSegments)
         {
             // for each segment, skip forwards by the fixed overhead (number of elements,
             // relative starting offset the segments will be serialized at, max segment offset)
             // and the size of the fixed components times the index of the segment we're serializing
-            out.seek(segmentPointersStartingOffset + Integer.BYTES + Integer.BYTES + Long.BYTES + (segment.idx * (Long.BYTES + Integer.BYTES)));
+            long offsetOfFixedPartsForCurrentSegment = segmentPointersStartingOffset
+                                                       + SIZE_SEGMENT_HEADER_SERIALIZATION_OVERHAED
+                                                       + (SIZE_FIXED_LENGTH_COMPONENTS_SINGLE_SEGMENT * segment.idx);
+            out.seek(offsetOfFixedPartsForCurrentSegment);
 
             // the starting file offset for this segment
             out.writeLong(segment.offset);
-            // the relative offset to start reading at to deserialize the AlignedSegment object
-            out.writeInt(currentRelativeOffsetToSerializedSegments);
+            // the total usable length of all segments (excluding any possible padding for alignment on page boundaries)
+            out.writeLong(segment.length);
+            // the total length (including any possible padding) of a segment
+            out.writeLong(segment.alignedLength);
 
-            // get the file position after writing the fixed components.
-            // after we skip to the position to seriaize the actual AlignedSegment
-            // object and serialize it, we'll return the position back to this offset
-            long currentFilePos = out.getFilePointer();
-            long currentAbsoluteSerializedSegmentsOffset = segmentPointersStartingOffset + serializedSegmentsStartingOffset
-                                                           + currentRelativeOffsetToSerializedSegments;
-            out.seek(segmentPointersStartingOffset + serializedSegmentsStartingOffset + currentRelativeOffsetToSerializedSegments);
-            AlignedSegment.SERIALIZER.serialize(segment, stream);
-            maxOffsetWritten = out.getFilePointer();
-            // figure out how many bytes we ended up serializing for this AlignedSegment.
-            // we add this to our current relative offset so the next time thru we'll encode
-            // the next element at the correct new offset
-            long bytesSerialized = out.getFilePointer() - currentAbsoluteSerializedSegmentsOffset;
-            currentRelativeOffsetToSerializedSegments += bytesSerialized;
-
-            out.seek(currentFilePos);
-
-            // if we're on the final segment, we also serialize the end offset.
-            // this allows us to calculate the size to deserialize when reading
-            // by determining the size of the final element by calculating the
-            // last element + 1 - last element
-            if (currentSegmentIdx == finishedSegments.size() - 1)
+            // if we only have 1 sub-segment, encoding the sub-segment data would be redundant
+            // so only encode the sub-segment bits if there are 2 or more sub-segments
+            if (segment.getSubSegments().size() > 1)
             {
-                out.writeLong(maxOffsetWritten);
+                // the relative offset to start reading at to deserialize variable length parts for segment's sub-segments
                 out.writeInt(currentRelativeOffsetToSerializedSegments);
+
+                out.seek(segmentPointersStartingOffset + variableLengthSubSegmentsStartingOffset + currentRelativeOffsetToSerializedSegments);
+
+                // get starting position so we can calculate the total number of bytes we
+                // serialized at the end to update the new relative offset for the next
+                // segment
+                long subSegmentSerializationStartOffset = out.getFilePointer();
+
+                // serialize each sub-segment stuff
+                out.writeShort(segment.getSubSegments().size());
+                for (AlignedSubSegment subSegment : segment.getSubSegments())
+                {
+                    out.writeLong(subSegment.offset); // starting offset for this sub-segment
+                    out.writeLong(subSegment.length); // the length of the actual usable bytes this sub-segment without any possible padding
+                    out.writeLong(subSegment.alignedLength); // the length of the sub-segment including any padding to an aligned boundry
+                    out.writeBoolean(subSegment.isPageAligned()); // is the sub-segment page aligned?
+                }
+
+                // figure out the total number of bytes we serailized and update the relative offset
+                long subSegmentSerializationEndOffset = out.getFilePointer();
+                currentRelativeOffsetToSerializedSegments += subSegmentSerializationEndOffset - subSegmentSerializationStartOffset;
             }
-            currentSegmentIdx++;
+            else
+            {
+                // there is only 1 sub-segment, so encode a relative offset of -1 or -2 for the sub-segment
+                // depending on if the single sub-segment is aligned or non-aligned so the deserialization
+                // logic can know it doesn't exist and reuse the segment offset and lengths and save us a
+                // bunch of serialization space :)
+                if (segment.getLastSubSegment().isPageAligned())
+                    out.writeInt(SEGMENT_ONLY_HAS_SINGLE_ALIGNED_SUBSEGMENT);
+                else
+                    out.writeInt(SEGMENT_ONLY_HAS_SINGLE_NON_ALIGNED_SUBSEGMENT);
+            }
         }
 
-        out.seek(maxOffsetWritten);
+        out.seek(out.length());
 
         // the *very* last thing we write is the pointer to the
         // segment pointers.. this way we can look at the end of
@@ -422,12 +487,14 @@ public class PageAlignedWriter implements WritableByteChannel
     public void writeShort(int v) throws IOException
     {
         assert v < 1 << 15;
-        out.writeShort(v);
+        out.write((v >>> 8) & 0xFF);
+        out.write(v & 0xFF);
     }
 
     public void writeShort(short v) throws IOException
     {
-        out.writeShort(v);
+        out.write((v >>> 8) & 0xFF);
+        out.write(v & 0xFF);
     }
 
     public void writeInt(int v) throws IOException
@@ -472,29 +539,73 @@ public class PageAlignedWriter implements WritableByteChannel
         return lastFlushOffset;
     }
 
-    public void finishAndFlush()
+    private void finishAndFlush()
     {
         if (runPostFlush != null)
             runPostFlush.run();
     }
 
+    /**
+     * Write the provided number of bytes from the provided ByteBuffer
+     * starting at the provided offset into the backing OutputStream/file.
+     *
+     * This method *will* modify/update the position() of the source ByteBuffer
+     * to the original position plus the number of bytes read/used.
+     *
+     * @param src ByteBuffer to read bytes from to write into the OutputStream/file
+     * @param off the offset to
+     * @param len
+     * @return
+     * @throws IOException
+     */
     public int write(ByteBuffer src, int off, int len) throws IOException
     {
-        // todo kjkj: use a shared buffer like SequentialWriter..
-        byte[] buf = new byte[len];
-        ByteBufferUtil.arrayCopy(src, off, buf, 0, len);
-        out.write(buf);
-        return len;
+        if (buf == null)
+            buf = new byte[BUF_SIZE];
+
+        // never assume anything when it comes to the ByteBuffer API....
+        // *always* reset the backing position on the source ByteBuffer
+        // to the provided offset. This means the caller's contact is to
+        // provide the starting offset to the method, but doesn't need to worry
+        // about ensuring the position of the source ByteBuffer was updated
+        // before calling us.
+        src.position(off);
+
+        int currentSrcOffset = off;
+        int bytesRead = 0;
+        while (bytesRead < len)
+        {
+            // always attempt to write a full BUF_SIZE, or the maximum remaining < BUF_SIZE
+            int bytesRemaining = len - bytesRead;
+            int bytesToRead = (bytesRemaining > BUF_SIZE) ? BUF_SIZE : bytesRemaining;
+            ByteBufferUtil.arrayCopy(src, currentSrcOffset, buf, 0, bytesToRead);
+
+            // now, write the number of bytes written into the buffer to the file
+            out.write(buf, 0, bytesToRead);
+
+            // update the source ByteBuffer's position() by the number of bytes read,
+            // buffered, and written in this iteration
+            src.position(src.position() + bytesToRead);
+            bytesRead += bytesToRead;
+            currentSrcOffset += bytesToRead;
+        }
+
+        return bytesRead;
     }
 
+    /**
+     * Write all the remaining bytes from the the current position()
+     * on the source ByteBuffer to the OutputStream/file. So, in concrete
+     * terms write src.remaining() bytes starting from src.position()
+     * to the OutputStream/file.
+     *
+     * This method *will* modify/update the position() of the source ByteBuffer
+     * to the original position plus the number of bytes read/used.
+     */
     @Override
     public int write(ByteBuffer src) throws IOException
     {
-        // todo: use a shared buffer like SequentialWriter..
-        byte[] buf = new byte[src.remaining()];
-        src.get(buf);
-        out.write(buf);
-        return buf.length;
+        return write(src, src.position(), src.remaining());
     }
 
     @Override
@@ -503,11 +614,60 @@ public class PageAlignedWriter implements WritableByteChannel
         return out.getChannel().isOpen();
     }
 
+    private void handle(Throwable t, boolean throwExceptions)
+    {
+        if (!throwExceptions)
+            logger.warn("Suppressing exception thrown while aborting writer", t);
+        else
+            throw new FSWriteError(t, getPath());
+    }
+
+    /**
+     * We want to ensure we also sync the parent directory containing
+     * the actual file we are writing out once, because there is a
+     * possibility that the file will be fsync'ed and flushed before the directory
+     * is, leading to an orphined file. We only want to do this once.
+     */
+    private void maybeFsyncParentDirectory()
+    {
+        if (!directorySynced)
+        {
+            CLibrary.trySync(directoryFD);
+            directorySynced = true;
+        }
+    }
+
+    private void cleanup(boolean throwExceptions)
+    {
+        if (directoryFD >= 0)
+        {
+            try { CLibrary.tryCloseFD(directoryFD); }
+            catch (Throwable t) { handle(t, throwExceptions); }
+            directoryFD = -1;
+        }
+
+        // close is idempotent
+        try { out.close(); }
+        catch (Throwable t) { handle(t, throwExceptions); }
+    }
+
+    public void abort()
+    {
+        if (writerClosed)
+            return;
+
+        cleanup(false);
+        writerClosed = true;
+    }
+
     @Override
     public void close()
     {
         assert !segmentInProgress;
 
+        if (writerClosed)
+            return;
+        
         try
         {
             // todo: is it right to do this here? or should serializeSegmentPointers do it automagically always?
@@ -516,9 +676,13 @@ public class PageAlignedWriter implements WritableByteChannel
 
             serializeSegmentPointers();
             out.getFD().sync();
-            out.close();
 
+            lastFlushOffset = out.length();
             finishAndFlush();
+
+            cleanup(false);
+
+            writerClosed = true;
         }
         catch (IOException e)
         {

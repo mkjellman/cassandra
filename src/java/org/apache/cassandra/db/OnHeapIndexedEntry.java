@@ -162,7 +162,7 @@ public class OnHeapIndexedEntry implements IndexedEntry
 
     }
 
-    public void reset(boolean reversed, long position)
+    public void reset(boolean reversed)
     {
         iteratorDirectionReversed = reversed;
         lastDeserializedBlock = -1;

@@ -20,15 +20,17 @@ package org.apache.cassandra.db.index.birch;
 
 import com.google.common.collect.AbstractIterator;
 
+import com.yammer.metrics.core.TimerContext;
 import org.apache.cassandra.db.composites.CType;
 import org.apache.cassandra.db.composites.Composite;
+import org.apache.cassandra.io.util.FileMark;
 import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.metrics.BirchMetrics;
 import org.apache.cassandra.utils.Pair;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
 
 import static org.apache.cassandra.db.index.birch.BirchWriter.SERIALIZERS;
 
@@ -46,37 +48,25 @@ import static org.apache.cassandra.db.index.birch.BirchWriter.SERIALIZERS;
  */
 public class BirchReader<T> implements Closeable
 {
-    private final PageAlignedReader reader;
+    private PageAlignedReader reader;
     private final Descriptor descriptor;
     private final BSerializer<T> serializer;
-    private MappedByteBuffer overflowBuf;
 
     public BirchReader(PageAlignedReader reader) throws IOException
     {
         this.reader = reader;
 
-        assert !reader.getCurrentSubSegment().shouldUseSingleMmappedBuffer();
+        assert reader.isCurrentSubSegmentPageAligned();
 
-        reader.seek(reader.getCurrentSubSegment().getAlignedEndOffset() - reader.getCurrentSubSegment().pageChunkSize);
+        reader.seek(reader.getCurrentSubSegmentAlignedEndOffset() - reader.getPageAlignedChunkSize());
         this.descriptor = Descriptor.deserialize(reader);
-        reader.seek(reader.getCurrentSubSegment().offset);
+        reader.seekToStartOfCurrentSubSegment();
         this.serializer = SERIALIZERS.get(descriptor.getSerializerType());
     }
 
-    /**
-     * We lazily instantiate overflowBuf to avoid mmapping the overflow buffer
-     * until we actually hit a element in the tree that has an overflow component.
-     *
-     * @throws IOException thrown if the mmap fails
-     */
-    private void maybeCreateOverflowBuf() throws IOException
+    public void unsafeReplaceReader(PageAlignedReader reader)
     {
-        if (overflowBuf == null)
-        {
-            overflowBuf = (descriptor.getOverflowPageLength() > 0)
-                               ? reader.getMmappedBuffer(descriptor.getOverflowPageOffset(), descriptor.getOverflowPageLength())
-                               : null;
-        }
+        this.reader = reader;
     }
 
     /**
@@ -157,38 +147,12 @@ public class BirchReader<T> implements Closeable
 
         // skip to the starting offset of the key
         reader.seek(segmentStartMark.getSyntheticPointer() + offsetInNodeToKey);
-        ByteBuffer key = reader.readBytes(lengthOfKey);
 
-        // if this key has overflow bytes, we read one additional int encoded at the end of the key
-        // to get the relative offset to the remaining bytes in the overflow page
-        if (hasOverflow)
-        {
-            int offsetInOverflowPage = reader.readInt();
-
-            // skip the relative number of bytes into the overflow page, read
-            // the length (encoded as an int), and then read that many bytes.
-            // Once we have the remaining key's bytes from the overflow page we
-            // reconstruct a single byte buffer with both components and return that
-            maybeCreateOverflowBuf();
-            overflowBuf.position(offsetInOverflowPage);
-            int lengthToRead = overflowBuf.getInt();
-            byte[] reconstructedKeyBuf = new byte[key.capacity() + lengthToRead];
-            overflowBuf.get(reconstructedKeyBuf, key.capacity(), lengthToRead);
-            ByteBuffer reconstructedKey = ByteBuffer.wrap(reconstructedKeyBuf);
-            reconstructedKey.put(key);
-            reconstructedKey.position(0);
-            key = reconstructedKey;
-        }
+        ByteBuffer key = getKey(lengthOfKey, hasOverflow);
 
         // the reader makes the assumptions that previous operations will clean
         // up after themselves and will always reset the segment back to the start
         reader.reset(segmentStartMark);
-
-        // always set the position() on the key ByteBuffer being returned
-        // to 0. This way, methods calling this method can always assume
-        // that the ByteBuffer being returned does not need to be duplicated or
-        // have it's internal position reset before using it.
-        key.position(0);
 
         return new KeyAndOffsetPtr(key, ptrOffset);
     }
@@ -220,39 +184,10 @@ public class BirchReader<T> implements Closeable
         short offsetInNodeToKey = reader.readShort();
         short offsetOfNextKey = reader.readShort();
         int lengthOfKey = offsetOfNextKey - offsetInNodeToKey;
-        if (hasOverflow)
-        {
-            // remove one Integer worth of bytes from key length as calculated size
-            // will include encoded overflow offset (if element has overflow component)
-            lengthOfKey = lengthOfKey - Integer.BYTES;
-        }
 
         reader.seek(segmentStartMark.getSyntheticPointer() + offsetInNodeToKey);
-        ByteBuffer key = reader.readBytes(lengthOfKey);
-        if (hasOverflow)
-        {
-            // read relative overflow offset encoded at end of key
-            int offsetInOverflowPage = reader.readInt();
 
-            // skip to offset in overflow and get key's overflow bytes. then we
-            // create a single merged byte buffer with the merged results of the
-            // key bytes from the tree and it's overflow bytes
-            maybeCreateOverflowBuf();
-            overflowBuf.position(offsetInOverflowPage);
-            int lengthToRead = overflowBuf.getInt();
-            byte[] reconstructedKeyBuf = new byte[key.capacity() + lengthToRead];
-            overflowBuf.get(reconstructedKeyBuf, key.capacity(), lengthToRead);
-
-            ByteBuffer reconstructedKey = ByteBuffer.wrap(reconstructedKeyBuf);
-            reconstructedKey.put(key);
-            reconstructedKey.position(0);
-            key = reconstructedKey;
-        }
-
-        // always ensure we set the position() of the key we are returning to 0
-        // so regardless of what happens, the caller can always assume it doesn't
-        // need to reset the position before using it.
-        key.position(0);
+        ByteBuffer key = getKey(lengthOfKey, hasOverflow);
 
         reader.seek(valuesOffset + (idx * serializer.serializedValueSize()));
         T obj = serializer.deserializeValue(key, type, reader);
@@ -262,6 +197,88 @@ public class BirchReader<T> implements Closeable
         reader.reset(segmentStartMark);
 
         return obj;
+    }
+
+    /**
+     * @param lengthOfKey the length of the bytes of the key encoded in the Birch node itself
+     * @param hasOverflow if the key has an Overflow component
+     * @return a ByteBuffer with the full contents of the key deserialized from the Index
+     * @throws IOException an io error occured while reading the key from the Index file
+     */
+    private ByteBuffer getKey(int lengthOfKey, boolean hasOverflow) throws IOException
+    {
+        ByteBuffer key = (hasOverflow)
+                         ? getKeyWithOverflow(lengthOfKey)
+                         : getKeyWithoutOverflow(lengthOfKey);
+
+        // always ensure we set the position() of the key we are returning to 0
+        // so regardless of what happens, the caller can always assume it doesn't
+        // need to reset the position before using it.
+        key.position(0);
+
+        BirchMetrics.totalBytesReadPerKey.update(key.limit());
+
+        return key;
+    }
+
+    /**
+     * @param lengthOfKey the number of bytes to read from the backing Index for this key
+     * @return a ByteBuffer of the key containing the bytes read from the backing Index file
+     * @throws IOException an io error occured while reading the key from the Index file
+     */
+    private ByteBuffer getKeyWithoutOverflow(int lengthOfKey) throws IOException
+    {
+        ByteBuffer key = reader.readBytes(lengthOfKey);
+        return key;
+    }
+
+    /**
+     *
+     * @param lengthOfKey the length of the bytes of the key to read from the component inside
+     *                    the Birch node itself
+     * @return a reassembled single ByteBuffer containing the entire key with the bytes from
+     *         both the Birch node and the overflow bytes as necessary
+     * @throws IOException an io error occured while reading the key from the Index file
+     */
+    private ByteBuffer getKeyWithOverflow(int lengthOfKey) throws IOException
+    {
+        // if the key has an overflow component, remove one Integer worth of bytes
+        // from key length encoded in the birch node itself as calculated size
+        // will include encoded overflow offset (if element has overflow component)
+        lengthOfKey = lengthOfKey - Integer.BYTES;
+
+        BirchMetrics.readsRequiringOverflow.mark();
+
+        FileMark markBeforeOverflowSeek = reader.mark();
+
+        // we have to skip over the key to get to the offset in the overflow page
+        // we'll skip back and read it later so we can allocate a single buffer
+        // instead of allocating one to get the bytes from the node we're skipping
+        // initially here, one for the overflow bytes, and a final merged one for the two
+        reader.skipBytes(lengthOfKey);
+
+        // read relative overflow offset encoded at end of key
+        int offsetInOverflowPage = reader.readInt();
+        // skip to offset in overflow and get key's overflow bytes. then we
+        // create a single merged byte buffer with the merged results of the
+        // key bytes from the tree and it's overflow bytes
+        reader.seek(descriptor.getOverflowPageOffset() + offsetInOverflowPage);
+        int lengthToRead = reader.readInt();
+        BirchMetrics.additionalBytesReadFromOverflow.update(lengthToRead);
+
+        // create one byte[] that fits the entire key (both the part of the
+        // key that fit in the birch node itself and the remaining overflow bits)
+        byte[] reconstructedKeyBuf = new byte[lengthOfKey + lengthToRead];
+        reader.readFully(reconstructedKeyBuf, lengthOfKey, lengthToRead);
+
+        // seek the reader back to the offset in the file where the bytes for the
+        // key that fit inside the birch leaf are
+        reader.reset(markBeforeOverflowSeek);
+
+        // read the first (and remaining) bytes for the key from the birch node
+        // to fully reassembly the key
+        reader.readFully(reconstructedKeyBuf, 0, lengthOfKey);
+        return ByteBuffer.wrap(reconstructedKeyBuf);
     }
 
     /**
@@ -298,7 +315,7 @@ public class BirchReader<T> implements Closeable
         short entries = reader.readShort();
 
         T ret = null;
-        int retIdx = -1; //todo: kj changed back to -1 from 0
+        int retIdx = -1;
 
         int start = 0;
         int end = entries - 1; // binary search is zero-indexed
@@ -311,9 +328,8 @@ public class BirchReader<T> implements Closeable
             T elm = getElement(middle, type);
 
             ByteBuffer key = ((TreeSerializable) elm).serializedKey(type);
-            key.position(0);
 
-            int cmp = type.compare(type.serializer().deserialize(key), searchKey);
+            int cmp = type.compare(type.fromByteBuffer(key), searchKey);
             if (cmp == 0)
             {
                 return Pair.create(elm, middle);
@@ -351,7 +367,7 @@ public class BirchReader<T> implements Closeable
      */
     private long binarySearchNode(Composite searchKey, CType type, boolean reversed) throws IOException
     {
-        assert searchKey != null; //kjkj -- is this actually needed/worth the overhead of an assert?
+        assert searchKey != null;
 
         reader.seek(reader.getFilePointer());
         PageAlignedFileMark nodeStartingMark = (PageAlignedFileMark) reader.mark();
@@ -426,23 +442,31 @@ public class BirchReader<T> implements Closeable
      */
     public T search(Composite searchKey, CType type, boolean reversed) throws IOException
     {
-        long offset = descriptor.getRootOffset();
-
-        while (offset >= descriptor.getFirstNodeOffset())
+        TimerContext timerContext = BirchMetrics.totalTimeSpentPerSearch.time();
+        try
         {
-            reader.seek(offset);
-            offset = binarySearchNode(searchKey, type, reversed);
-            if (offset == -1)
+            long offset = descriptor.getRootOffset();
+
+            while (offset >= descriptor.getFirstNodeOffset())
             {
-                // todo: null is lame, use Optional instead?
-                return null;
+                reader.seek(offset);
+                offset = binarySearchNode(searchKey, type, reversed);
+                if (offset == -1)
+                {
+                    // todo: null is lame, use Optional instead?
+                    return null;
+                }
             }
+
+            reader.seek(offset); // go to leaf node that we will return a result from
+
+            Pair<T, Integer> res = binarySearchLeaf(searchKey, type, reversed);
+            return res.left;
         }
-
-        reader.seek(offset); // go to leaf node that we will return a result from
-
-        Pair<T, Integer> res = binarySearchLeaf(searchKey, type, reversed);
-        return res.left;
+        finally
+        {
+            timerContext.stop();
+        }
     }
 
     private class KeyAndOffsetPtr
@@ -510,7 +534,6 @@ public class BirchReader<T> implements Closeable
                 // go to leaf...
                 reader.seek(offset);
 
-                searchKey.toByteBuffer().position(0);
                 currentElmIdx = binarySearchLeaf(searchKey, type, reversed).right;
             }
             else
@@ -567,7 +590,6 @@ public class BirchReader<T> implements Closeable
                 PageAlignedFileMark leafOffsetStart = (PageAlignedFileMark) reader.mark();
 
                 short numElements = reader.readShort();
-                PageAlignedFileMark keyOffsetsStart = (PageAlignedFileMark) reader.mark();
 
                 if (!reversed && currentElmIdx + 1 > numElements)
                 {
@@ -584,8 +606,6 @@ public class BirchReader<T> implements Closeable
                         currentElmIdx = 0;
                         reader.seek(descriptor.getFirstLeafOffset() + (currentPage * (descriptor.getAlignedPageSize())));
                         leafOffsetStart = (PageAlignedFileMark) reader.mark();
-                        numElements = reader.readShort();
-                        keyOffsetsStart = (PageAlignedFileMark) reader.mark();
                     }
                 }
                 else if (reversed && currentElmIdx < 0)
@@ -604,26 +624,11 @@ public class BirchReader<T> implements Closeable
                         leafOffsetStart = (PageAlignedFileMark) reader.mark();
                         numElements = reader.readShort();
                         currentElmIdx = numElements - 1;
-                        keyOffsetsStart = (PageAlignedFileMark) reader.mark();
                     }
                 }
 
-                reader.seek(keyOffsetsStart.getSyntheticPointer() + (Short.BYTES * currentElmIdx));
-
-                // find the offsets inside this page for the next element's key and the offset
-                // of the next-next (or next + 1) element to determine the key's length
-                short nextElementKeyOffset = reader.readShort();
-                short nextPlusOneKeyOffset = reader.readShort();
-                int keyLength = nextPlusOneKeyOffset - nextElementKeyOffset;
-
-                // get the key
-                reader.seek(leafOffsetStart.getSyntheticPointer() + nextElementKeyOffset);
-                ByteBuffer key = reader.readBytes(keyLength);
-
-                // get the value
-                reader.seek(keyOffsetsStart.getSyntheticPointer() + (Short.BYTES * (numElements + 1))
-                            + (currentElmIdx * serializer.serializedValueSize()));
-                T next = serializer.deserializeValue(key, type, reader);
+                reader.seek(leafOffsetStart.getSyntheticPointer());
+                T next = getElement(currentElmIdx, type);
 
                 if (reversed)
                     currentElmIdx--;
@@ -642,19 +647,6 @@ public class BirchReader<T> implements Closeable
     @Override
     public void close()
     {
-        if (FileUtils.isCleanerAvailable())
-        {
-        /*
-         * Try forcing the unmapping of segments using undocumented unsafe sun APIs.
-         * If this fails (non Sun JVM), we'll have to wait for the GC to finalize the mapping.
-         * If this works and a thread tries to access any segment, hell will unleash on earth.
-         */
-            if (overflowBuf != null)
-            {
-                FileUtils.clean(overflowBuf);
-            }
-        }
-
         FileUtils.closeQuietly(reader);
     }
 }

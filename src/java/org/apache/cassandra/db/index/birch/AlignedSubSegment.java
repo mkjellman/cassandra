@@ -18,35 +18,26 @@
 
 package org.apache.cassandra.db.index.birch;
 
-import java.io.DataInput;
-import java.io.IOException;
-
-import org.apache.cassandra.db.TypeSizes;
-import org.apache.cassandra.io.ISerializer;
-import org.apache.cassandra.io.util.DataOutputPlus;
-
 public class AlignedSubSegment
 {
-    public static final AlignedSubSegmentSerializer SERIALIZER = new AlignedSubSegmentSerializer();
-
-    public final int idx;
+    public final short idx;
     public final long offset;
     public final long length;
     public final long alignedLength;
-    public final int pageChunkSize;
+    public final boolean isPageAligned;
 
-    public AlignedSubSegment(int idx, long offset, long length, long alignedLength, int pageChunkSize)
+    public AlignedSubSegment(short idx, long offset, long length, long alignedLength, boolean isPageAligned)
     {
         this.idx = idx;
         this.offset = offset;
         this.length = length;
         this.alignedLength = alignedLength;
-        this.pageChunkSize = pageChunkSize;
+        this.isPageAligned = isPageAligned;
     }
 
-    public boolean shouldUseSingleMmappedBuffer()
+    public boolean isPageAligned()
     {
-        return pageChunkSize <= 0;
+        return isPageAligned;
     }
 
     public long getEndOffset()
@@ -67,43 +58,7 @@ public class AlignedSubSegment
     @Override
     public String toString()
     {
-        return String.format("idx: %d offset: %d length: %d alignedLength: %d pageChunkSize: %d",
-                             idx, offset, length, alignedLength, pageChunkSize);
-    }
-
-    public static class AlignedSubSegmentSerializer implements ISerializer<AlignedSubSegment>
-    {
-
-        public void serialize(AlignedSubSegment subSegment, DataOutputPlus out) throws IOException
-        {
-            out.writeInt(subSegment.idx);
-            out.writeLong(subSegment.offset);
-            out.writeLong(subSegment.length);
-            out.writeLong(subSegment.alignedLength);
-            out.writeInt(subSegment.pageChunkSize);
-        }
-
-        public AlignedSubSegment deserialize(DataInput in) throws IOException
-        {
-            int idx = in.readInt();
-            long offset = in.readLong();
-            long length = in.readLong();
-            long alignedLength = in.readLong();
-            int pageChunkSize = in.readInt();
-            return new AlignedSubSegment(idx, offset, length, alignedLength, pageChunkSize);
-        }
-
-        public long serializedSize(AlignedSubSegment subSegment, TypeSizes type)
-        {
-            long size = 0;
-
-            size += type.sizeof(subSegment.idx);
-            size += type.sizeof(subSegment.offset);
-            size += type.sizeof(subSegment.length);
-            size += type.sizeof(subSegment.alignedLength);
-            size += type.sizeof(subSegment.pageChunkSize);
-
-            return size;
-        }
+        return String.format("idx: %d offset: %d length: %d alignedLength: %d isPageAligned: %b",
+                             idx, offset, length, alignedLength, isPageAligned);
     }
 }

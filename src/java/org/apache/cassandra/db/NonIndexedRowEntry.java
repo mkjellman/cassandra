@@ -106,7 +106,7 @@ public class NonIndexedRowEntry implements IndexedEntry
         //throw new UnsupportedOperationException();
     }
 
-    public void reset(boolean reversed, long position)
+    public void reset(boolean reversed)
     {
         throw new UnsupportedOperationException();
     }

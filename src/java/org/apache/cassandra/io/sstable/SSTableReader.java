@@ -231,6 +231,8 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
 
     private RestorableMeter readMeter;
 
+
+
     /**
      * Calculate approximate key count.
      * If cardinality estimator is available on all given sstables, then this method use them to estimate
@@ -819,11 +821,9 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
          if (!components.contains(Component.PRIMARY_INDEX))
              return;
 
-        FileDataInput primaryIndex = (descriptor.version.hasBirchIndexes)
+        try (FileDataInput primaryIndex = (descriptor.version.hasBirchIndexes)
                                      ? new PageAlignedReader(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)))
-                                     : RandomAccessReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
-
-        try
+                                     : RandomAccessReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX))))
         {
             long histogramCount = sstableMetadata.estimatedRowSize.count();
             long estimatedKeys = histogramCount > 0 && !sstableMetadata.estimatedRowSize.isOverflowed()
@@ -892,10 +892,6 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
                 if (!summaryLoaded)
                     indexSummary = summaryBuilder.build(partitioner);
             }
-        }
-        finally
-        {
-            FileUtils.closeQuietly(primaryIndex);
         }
 
         first = getMinimalKey(first);
@@ -976,43 +972,47 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
         if (ifile == null)
             return false;
 
-        Iterator<FileDataInput> segments = (descriptor.version.hasBirchIndexes)
-                                           ? ifile.indexIterator(0)
-                                           : ifile.legacyIndexIterator(0);
-        int i = 0;
-        int summaryEntriesChecked = 0;
-        int expectedIndexInterval = getMinIndexInterval();
-        while (segments.hasNext())
+        try (SegmentedFile.SegmentIterator segments = ifile.indexIterator(0))
         {
-            FileDataInput in = segments.next();
-            try
+            int i = 0;
+            int summaryEntriesChecked = 0;
+            int expectedIndexInterval = getMinIndexInterval();
+            while (segments.hasNext())
             {
-                while (!in.isEOF())
+                FileDataInput in = segments.next();
+                try
                 {
-                    ByteBuffer indexKey = ByteBufferUtil.readWithShortLength(in);
-                    if (i % expectedIndexInterval == 0)
+                    while (!in.isEOF())
                     {
-                        ByteBuffer summaryKey = ByteBuffer.wrap(indexSummary.getKey(i / expectedIndexInterval));
-                        if (!summaryKey.equals(indexKey))
-                            return false;
-                        summaryEntriesChecked++;
+                        ByteBuffer indexKey = ByteBufferUtil.readWithShortLength(in);
+                        if (i % expectedIndexInterval == 0)
+                        {
+                            ByteBuffer summaryKey = ByteBuffer.wrap(indexSummary.getKey(i / expectedIndexInterval));
+                            if (!summaryKey.equals(indexKey))
+                                return false;
+                            summaryEntriesChecked++;
 
-                        if (summaryEntriesChecked == Downsampling.BASE_SAMPLING_LEVEL)
-                            return true;
+                            if (summaryEntriesChecked == Downsampling.BASE_SAMPLING_LEVEL)
+                                return true;
+                        }
+                        IndexedEntry.Serializer.skip(in, descriptor.version);
+                        i++;
                     }
-                    IndexedEntry.Serializer.skip(in, descriptor.version);
-                    i++;
+                }
+                catch (IOException e)
+                {
+                    markSuspect();
+                    throw new CorruptSSTableException(e, in.getPath());
+                }
+                finally
+                {
+                    FileUtils.closeQuietly(in);
                 }
             }
-            catch (IOException e)
-            {
-                markSuspect();
-                throw new CorruptSSTableException(e, in.getPath());
-            }
-            finally
-            {
-                FileUtils.closeQuietly(in);
-            }
+        }
+        catch (Exception e)
+        {
+            logger.error("Failed while attempting to close SegmentIterator", e);
         }
 
         return true;
@@ -1731,88 +1731,95 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
         // is lesser than the first key of next interval (and in that case we must return the position of the first key
         // of the next interval).
         int i = 0;
-
-        Iterator<FileDataInput> segments = (descriptor.version.hasBirchIndexes)
-                                           ? ifile.indexIterator(sampledPosition)
-                                           : ifile.legacyIndexIterator(sampledPosition);
-
-        while (segments.hasNext())
+        
+        try (SegmentedFile.SegmentIterator segments = ifile.indexIterator(sampledPosition))
         {
-            FileDataInput in = segments.next();
-
-            try
+            while (segments.hasNext())
             {
-                while (!in.isCurrentSegmentExausted())
+                FileDataInput in = segments.next();
+
+                try
                 {
-                    i++;
-
-                    ByteBuffer indexKey = ByteBufferUtil.readWithShortLength(in);
-
-                    boolean opSatisfied; // did we find an appropriate position for the op requested
-                    boolean exactMatch; // is the current position an exact match for the key, suitable for caching
-
-                    // Compare raw keys if possible for performance, otherwise compare decorated keys.
-                    if (op == Operator.EQ && i <= effectiveInterval)
+                    while (!in.isCurrentSegmentExausted())
                     {
-                        opSatisfied = exactMatch = indexKey.equals(((DecoratedKey) key).getKey());
-                    }
-                    else
-                    {
-                        DecoratedKey indexDecoratedKey = partitioner.decorateKey(indexKey);
-                        int comparison = indexDecoratedKey.compareTo(key);
-                        int v = op.apply(comparison);
-                        opSatisfied = (v == 0);
-                        exactMatch = (comparison == 0);
-                        if (v < 0)
+                        i++;
+
+                        ByteBuffer indexKey = ByteBufferUtil.readWithShortLength(in);
+
+                        boolean opSatisfied; // did we find an appropriate position for the op requested
+                        boolean exactMatch; // is the current position an exact match for the key, suitable for caching
+
+                        // Compare raw keys if possible for performance, otherwise compare decorated keys.
+                        if (op == Operator.EQ && i <= effectiveInterval)
                         {
-                            Tracing.trace("Partition index lookup allows skipping sstable {}", descriptor.generation);
-                            return null;
+                            opSatisfied = exactMatch = indexKey.equals(((DecoratedKey) key).getKey());
                         }
-                    }
-
-                    if (opSatisfied)
-                    {
-                        // read data position from index entry
-                        IndexedEntry indexEntry = metadata.comparator.rowIndexEntrySerializer().deserialize(in, descriptor.version);
-
-                        if (exactMatch && updateCacheAndStats)
+                        else
                         {
-                            assert key instanceof DecoratedKey; // key can be == to the index key only if it's a true row key
-                            DecoratedKey decoratedKey = (DecoratedKey) key;
-
-                            if (logger.isTraceEnabled())
+                            DecoratedKey indexDecoratedKey = partitioner.decorateKey(indexKey);
+                            int comparison = indexDecoratedKey.compareTo(key);
+                            int v = op.apply(comparison);
+                            opSatisfied = (v == 0);
+                            exactMatch = (comparison == 0);
+                            if (v < 0)
                             {
-                                // expensive sanity check!  see CASSANDRA-4687
-                                FileDataInput fdi = dfile.getSegment(indexEntry.getPosition());
-                                DecoratedKey keyInDisk = partitioner.decorateKey(ByteBufferUtil.readWithShortLength(fdi));
-                                if (!keyInDisk.equals(key))
-                                    throw new AssertionError(String.format("%s != %s in %s", keyInDisk, key, fdi.getPath()));
-                                fdi.close();
+                                Tracing.trace("Partition index lookup allows skipping sstable {}", descriptor.generation);
+
+                                if (descriptor.version.hasBirchIndexes)
+                                    FileUtils.closeQuietly(segments);
+
+                                return null;
                             }
-
-                            // store exact match for the key
-                            cacheKey(decoratedKey, indexEntry);
                         }
-                        if (op == Operator.EQ && updateCacheAndStats)
-                            bloomFilterTracker.addTruePositive();
-                        Tracing.trace("Partition index with {} entries found for sstable {}", indexEntry.entryCount(), descriptor.generation);
-                        return indexEntry;
-                    }
 
-                    if (!in.isCurrentSegmentExausted())
-                        IndexedEntry.Serializer.skip(in, descriptor.version);
+                        if (opSatisfied)
+                        {
+                            // read data position from index entry
+                            IndexedEntry indexEntry = metadata.comparator.rowIndexEntrySerializer().deserialize(in, descriptor.version);
+
+                            if (exactMatch && updateCacheAndStats)
+                            {
+                                assert key instanceof DecoratedKey; // key can be == to the index key only if it's a true row key
+                                DecoratedKey decoratedKey = (DecoratedKey) key;
+
+                                if (logger.isTraceEnabled())
+                                {
+                                    // expensive sanity check!  see CASSANDRA-4687
+                                    FileDataInput fdi = dfile.getSegment(indexEntry.getPosition());
+                                    DecoratedKey keyInDisk = partitioner.decorateKey(ByteBufferUtil.readWithShortLength(fdi));
+                                    if (!keyInDisk.equals(key))
+                                        throw new AssertionError(String.format("%s != %s in %s", keyInDisk, key, fdi.getPath()));
+                                    fdi.close();
+                                }
+
+                                // store exact match for the key
+                                cacheKey(decoratedKey, indexEntry);
+                            }
+                            if (op == Operator.EQ && updateCacheAndStats)
+                                bloomFilterTracker.addTruePositive();
+                            Tracing.trace("Partition index with {} entries found for sstable {}", indexEntry.entryCount(), descriptor.generation);
+                            return indexEntry;
+                        }
+
+                        if (!in.isCurrentSegmentExausted())
+                            IndexedEntry.Serializer.skip(in, descriptor.version);
+                    }
+                }
+                catch (IOException e)
+                {
+                    markSuspect();
+                    throw new CorruptSSTableException(e, in.getPath());
+                }
+                finally
+                {
+                    if (!descriptor.version.hasBirchIndexes)
+                        FileUtils.closeQuietly(in);
                 }
             }
-            catch (IOException e)
-            {
-                markSuspect();
-                throw new CorruptSSTableException(e, in.getPath());
-            }
-            finally
-            {
-                if (!descriptor.version.hasBirchIndexes)
-                    FileUtils.closeQuietly(in);
-            }
+        }
+        catch (Exception e)
+        {
+            logger.error("Failed to close index SegmentIterator", e);
         }
 
         if (op == Operator.EQ && updateCacheAndStats)
@@ -1820,6 +1827,7 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
         Tracing.trace("Partition index lookup complete (bloom filter false positive) for sstable {}", descriptor.generation);
         return null;
     }
+
 
     /**
      * Finds and returns the first key beyond a given token in this SSTable or null if no such key exists.
@@ -1834,11 +1842,7 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
         if (ifile == null)
             return null;
 
-        Iterator<FileDataInput> segments = (descriptor.version.hasBirchIndexes)
-                                           ? ifile.indexIterator(sampledPosition)
-                                           : ifile.legacyIndexIterator(sampledPosition);
-
-        try
+        try (SegmentedFile.SegmentIterator segments = ifile.indexIterator(sampledPosition))
         {
             while (segments.hasNext())
             {
@@ -1867,10 +1871,9 @@ public class SSTableReader extends SSTable implements SelfRefCounted<SSTableRead
                 }
             }
         }
-        finally
+        catch (Exception e)
         {
-            if (segments instanceof SegmentedFile.SegmentIterator)
-                ((SegmentedFile.SegmentIterator) segments).close();
+            logger.error("Failed while attempting to close SegmentIterator", e);
         }
 
         return null;

@@ -105,7 +105,7 @@ public class SSTableRewriter
         this.cfs = cfs;
         this.maxAge = maxAge;
         this.isOffline = isOffline;
-        this.preemptiveOpenInterval = preemptiveOpenInterval;
+        this.preemptiveOpenInterval = Long.MAX_VALUE;
     }
 
     private static long calculateOpenInterval(boolean shouldOpenEarly)
@@ -121,7 +121,7 @@ public class SSTableRewriter
         return writer;
     }
 
-    public IndexedEntry append(AbstractCompactedRow row)
+    public boolean append(AbstractCompactedRow row)
     {
         // we do this before appending to ensure we can resetAndTruncate() safely if the append fails
         maybeReopenEarly(row.key);
@@ -145,13 +145,20 @@ public class SSTableRewriter
                 }
                 if (save)
                     cachedKeys.put(row.key, index);
+                // todo kjkj (jason and i think we can throw this cache stuff all away)??
             }
         }
-        return index;
+        if (index != null)
+        {
+            index.close();
+            return true;
+        }
+
+        return false;
     }
 
     // attempts to append the row, if fails resets the writer position
-    public IndexedEntry tryAppend(AbstractCompactedRow row)
+    public boolean tryAppend(AbstractCompactedRow row)
     {
 
         try

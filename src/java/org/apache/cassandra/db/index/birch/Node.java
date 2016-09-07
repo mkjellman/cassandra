@@ -130,19 +130,22 @@ public class Node implements TreeSerializable
             writer.seek(pageFileOffsetStart + currentKeyOffset);
 
             ByteBuffer key = currentElement.getTreeSerializable().serializedKey(type);
-            key.position(0);
-            int totalKeyLength = key.remaining();
+            int keyStartingPosition = key.position();
+            int totalKeyLength = key.limit() - keyStartingPosition;
 
             int keySize;
-            if (key.remaining() > maxKeyLength)
+            if (totalKeyLength > maxKeyLength)
             {
-                writer.write(key, 0, maxKeyLength);
+                // key being added overflows :(, need to split the key into node page and overflow page
+                writer.write(key, keyStartingPosition, maxKeyLength);
 
                 byte[] overflowBuf = new byte[totalKeyLength - maxKeyLength];
-                ByteBufferUtil.arrayCopy(key, maxKeyLength, overflowBuf, 0, overflowBuf.length);
+                int keyOverflowStartingPosition = keyStartingPosition + maxKeyLength;
+                ByteBufferUtil.arrayCopy(key, keyOverflowStartingPosition, overflowBuf, 0, overflowBuf.length);
                 int overflowOffset = overflow.add(ByteBuffer.wrap(overflowBuf));
                 writer.writeInt(overflowOffset);
 
+                // the key size written into this node page is the max without overflow
                 keySize = maxKeyLength + Integer.BYTES;
 
                 int overflowByteOffset = getByteOffsetInOverflowField(i);
@@ -152,10 +155,12 @@ public class Node implements TreeSerializable
             }
             else
             {
-                keySize = key.remaining();
+                // the key size written into this node page is the total key length, as it doesn't overflow
+                keySize = totalKeyLength;
                 writer.write(key);
             }
 
+            // increment the relative offset in this node's page by the amount written (exclusive of overflow)
             currentKeyOffset += keySize;
 
             // check if we are on the last element, if so we need to encode the ending position into the offsets

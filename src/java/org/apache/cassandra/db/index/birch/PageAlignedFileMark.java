@@ -24,17 +24,21 @@ public class PageAlignedFileMark implements FileMark
 {
     public final long rafPointer;
     public final long currentSegmentPointer;
+    public final int currentSegmentIdx;
+    public final short currentSubSegmentIdx;
 
-    public PageAlignedFileMark(long rafPointer, long currentSegmentPointer)
+    public PageAlignedFileMark(long rafPointer, long currentSegmentPointer,
+                               int currentSegmentIdx, short currentSubSegmentIdx)
     {
         this.rafPointer = rafPointer;
         this.currentSegmentPointer = currentSegmentPointer;
+        this.currentSegmentIdx = currentSegmentIdx;
+        this.currentSubSegmentIdx = currentSubSegmentIdx;
     }
 
     public PageAlignedFileMark(long rafPointer)
     {
-        this.rafPointer = rafPointer;
-        this.currentSegmentPointer = 0;
+        this(rafPointer, 0, 0, (short) 0);
     }
 
     public long getSyntheticPointer()

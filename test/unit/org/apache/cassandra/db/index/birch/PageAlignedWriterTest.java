@@ -25,6 +25,7 @@ import java.util.Random;
 import java.util.UUID;
 
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import org.apache.cassandra.db.marshal.UTF8Type;
@@ -45,62 +46,6 @@ public class PageAlignedWriterTest
     public void simpleMultipleSegments() throws IOException
     {
         writeAndReadPageAlignedFile(4);
-    }
-
-    @Test
-    public void readFromCachePaddedSegment() throws Exception
-    {
-        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), "btree");
-
-        try (PageAlignedWriter writer = new PageAlignedWriter(tmpFile))
-        {
-            writer.startNewSegment();
-            writer.startNewSubSegment(4096);
-
-            for (int k = 0; k < 10; k++)
-            {
-                byte[] buf = new byte[4096];
-                for (int i = 0; i < 4092; i++)
-                {
-                    buf[i] = 'a';
-                }
-                for (int i = 4092; i < 4096; i++)
-                {
-                    buf[i] = 'x';
-                }
-                writer.write(buf, 0, buf.length);
-            }
-            writer.finalizeCurrentSubSegment();
-            writer.finalizeCurrentSegment();
-        }
-
-        try (PageAlignedReader reader = new PageAlignedReader(tmpFile))
-        {
-            reader.setSegment(0);
-
-            reader.seek(4096);
-            Assert.assertEquals(0, reader.getCurrentInternalBufferPosition());
-            Assert.assertEquals(4096, reader.getFilePointer());
-            reader.readByte();
-            Assert.assertEquals(1, reader.getCurrentInternalBufferPosition());
-            Assert.assertEquals(4096, reader.getFilePointer());
-            reader.readLong();
-            reader.readLong();
-            reader.seek(4096);
-            Assert.assertEquals(0, reader.getCurrentInternalBufferPosition());
-            Assert.assertEquals(4096, reader.getFilePointer());
-            reader.seek((4096 * 3) + 92);
-            Assert.assertEquals((4096 * 3), reader.getFilePointer());
-            Assert.assertEquals(92, reader.getCurrentInternalBufferPosition());
-            reader.seek(4096 * 3);
-            Assert.assertEquals((4096 * 3), reader.getFilePointer());
-            Assert.assertEquals(0, reader.getCurrentInternalBufferPosition());
-            reader.readByte();
-            Assert.assertEquals((4096 * 3), reader.getFilePointer());
-            Assert.assertEquals(1, reader.getCurrentInternalBufferPosition());
-        }
-
-        Assert.assertTrue(tmpFile.delete());
     }
 
     private static void writeAndReadPageAlignedFile(int numSegments) throws IOException
@@ -152,13 +97,16 @@ public class PageAlignedWriterTest
                 reader.setSegment(i, 1);
                 char c = (char) reader.readByte();
                 Assert.assertEquals('a', c);
-                reader.seek(reader.getCurrentSubSegment().offset + 4);
+                reader.seekToStartOfCurrentSubSegment();
+                reader.skipBytes(4);
                 char c2 = (char) reader.readByte();
                 Assert.assertEquals('a', c2);
-                reader.seek(reader.getCurrentSubSegment().offset + (4096 * 2) + 24);
+                reader.seekToStartOfCurrentSubSegment();
+                reader.skipBytes((4096 * 2) + 24);
                 char c3 = (char) reader.readByte();
                 Assert.assertEquals('a', c3);
-                reader.seek(reader.getCurrentSubSegment().offset + 4096 - 2);
+                reader.seekToStartOfCurrentSubSegment();
+                reader.skipBytes(4096 - 2);
                 char c4 = (char) reader.readByte();
                 Assert.assertEquals('x', c4);
             }

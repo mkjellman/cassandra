@@ -22,17 +22,12 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.Random;
-import java.util.Set;
 import java.util.UUID;
 
-import com.google.common.collect.AbstractIterator;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -46,7 +41,6 @@ import org.apache.cassandra.db.composites.SimpleDenseCellNameType;
 import org.apache.cassandra.db.marshal.TimeUUIDType;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.io.sstable.IndexInfo;
-import org.apache.cassandra.utils.UUIDGen;
 
 public class BirchWriterTest
 {

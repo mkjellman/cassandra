@@ -323,8 +323,16 @@ public class CollationController
         finally
         {
             for (Object iter : iterators)
+            {
                 if (iter instanceof Closeable)
+                {
                     FileUtils.closeQuietly((Closeable) iter);
+                }
+                else if (iter instanceof AutoCloseable)
+                {
+                    FileUtils.closeQuietly((AutoCloseable) iter);
+                }
+            }
         }
     }
 

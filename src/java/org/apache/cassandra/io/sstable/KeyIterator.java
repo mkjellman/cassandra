@@ -87,7 +87,7 @@ public class KeyIterator extends AbstractIterator<DecoratedKey> implements Close
                         hasIteratedOnce = true;
                 }
 
-                reader.seek(reader.getCurrentSubSegment().offset);
+                reader.seekToStartOfCurrentSubSegment();
 
                 hasIteratedOnce = true;
                 return StorageService.getPartitioner().decorateKey(ByteBufferUtil.readWithShortLength(in));

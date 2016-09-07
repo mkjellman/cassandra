@@ -20,29 +20,35 @@ package org.apache.cassandra.io.util;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.RandomAccessFile;
-import java.nio.channels.FileChannel;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.List;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.db.index.birch.AlignedSegment;
 import org.apache.cassandra.db.index.birch.PageAlignedReader;
+import org.apache.cassandra.io.FSReadError;
 
 public class PageAlignedAwareSegmentedFile extends SegmentedFile
 {
-    private final File file;
+    private static final Logger logger = LoggerFactory.getLogger(PageAlignedAwareSegmentedFile.class);
 
-    public PageAlignedAwareSegmentedFile(String path)
+    private final String path;
+
+    private PageAlignedAwareSegmentedFile(String path)
     {
         super(new Cleanup(path), path, new File(path).length());
-        this.file = new File(path);
+        this.path = path;
+    }
+
+    private PageAlignedAwareSegmentedFile(PageAlignedAwareSegmentedFile copy)
+    {
+        super(copy);
+        this.path = copy.path;
     }
 
     public PageAlignedAwareSegmentedFile sharedCopy()
     {
-        return new PageAlignedAwareSegmentedFile(file.getAbsolutePath());
+        return new PageAlignedAwareSegmentedFile(this);
     }
 
     private static final class Cleanup extends SegmentedFile.Cleanup
@@ -54,8 +60,6 @@ public class PageAlignedAwareSegmentedFile extends SegmentedFile
 
         public void tidy()
         {
-            // todo "Try forcing the unmapping of segments using undocumented unsafe sun APIs."
-            // see "MmappedSegmentedFile"
         }
     }
 
@@ -73,22 +77,82 @@ public class PageAlignedAwareSegmentedFile extends SegmentedFile
 
         protected SegmentedFile complete(String path, long overrideLength, boolean isFinal)
         {
+
             return new PageAlignedAwareSegmentedFile(path);
         }
     }
 
+    /**
+     * Gets a new instance of a SegmentIterator implementation to iterate over segments.
+     * The first segment to be returned will be the segment that contains the given position.
+     * <p>
+     * It is the callers responsibility to close each segment after use.
+     *
+     * @param position the position in the index of the first segment to start the iterator at
+     * @return a SegmentIterator starting at the provided position to iterate segments
+     *
+     */
+    @Override
+    public SegmentIterator indexIterator(long position)
+    {
+        return new PageAlignedAwareSegmentedFile.PageAlignedSegmentIterator(position);
+    }
+
     public FileDataInput getSegment(long position)
     {
-        try
+        throw new UnsupportedOperationException();
+    }
+
+    private class PageAlignedSegmentIterator extends SegmentIterator
+    {
+        private final PageAlignedReader reader;
+        private final PageAlignedReader.AlignedSegmentIterator segmentIterator;
+
+        private PageAlignedSegmentIterator(long position)
         {
-            PageAlignedReader reader = new PageAlignedReader(file);
-            int segmentRes = reader.findIdxForPosition(position);
-            reader.setSegment(segmentRes);
-            return reader;
+            try
+            {
+                PageAlignedReader reader = new PageAlignedReader(new File(path));
+                this.reader = reader;
+                this.segmentIterator = reader.getSegmentIterator(reader.findIdxForPosition(position));
+            }
+            catch (IOException e)
+            {
+                logger.error("Fatal exception while creating segment iterator for {}", path, e);
+                throw new FSReadError(e, path);
+            }
         }
-        catch (IOException e)
+
+        public boolean hasNext()
         {
-            throw new RuntimeException(e);
+            return segmentIterator.hasNext();
+        }
+
+        public FileDataInput next()
+        {
+            AlignedSegment next = segmentIterator.next();
+            try
+            {
+                PageAlignedReader readerForSegment = PageAlignedReader.copy(reader);
+                readerForSegment.setSegment(next.idx, 0);
+                readerForSegment.seek(next.offset);
+                return readerForSegment;
+            }
+            catch (IOException e)
+            {
+                throw new FSReadError(e, path);
+            }
+        }
+
+        public void remove()
+        {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void close() throws Exception
+        {
+            reader.close();
         }
     }
 }

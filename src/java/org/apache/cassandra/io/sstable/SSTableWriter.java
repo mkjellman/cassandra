@@ -485,8 +485,8 @@ public class SSTableWriter extends SSTable
             iwriter.summary.close();
             // try to save the summaries to disk
             sstable.saveSummary(iwriter.builder, dbuilder);
-            //iwriter.indexFile.close(); //kjkj ?
-            //ifile.close(); //kjkj ?
+            // note: no need to close the index file in the iwriter, as the index
+            // file has already been closed at this point by IndexWriter#close()
             iwriter = null;
             dbuilder = null;
         }
@@ -644,7 +644,7 @@ public class SSTableWriter extends SSTable
         public void abort()
         {
             summary.close();
-            //indexFile.abort(); // todo kjkj: what is the abort behavior for birch
+            indexFile.abort(); // todo kjkj: what is the 'abort' behavior for birch
             bf.close();
         }
 

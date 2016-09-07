@@ -23,6 +23,9 @@ import java.util.*;
 import com.google.common.collect.AbstractIterator;
 import com.google.common.util.concurrent.RateLimiter;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import org.apache.cassandra.db.DataRange;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.IndexedEntry;
@@ -36,6 +39,7 @@ import org.apache.cassandra.dht.AbstractBounds.Boundary;
 import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.io.util.FileDataInput;
+import org.apache.cassandra.io.util.FileMark;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -47,6 +51,8 @@ import static org.apache.cassandra.dht.AbstractBounds.minRight;
 
 public class SSTableScanner implements ISSTableScanner
 {
+    private static final Logger logger = LoggerFactory.getLogger(SSTableScanner.class);
+
     protected final RandomAccessReader dfile;
     private final FileDataInput ifile;
     public final SSTableReader sstable;
@@ -193,6 +199,9 @@ public class SSTableScanner implements ISSTableScanner
 
     public void close() throws IOException
     {
+        if (iterator != null)
+            FileUtils.closeQuietly((AutoCloseable) iterator);
+
         FileUtils.close(dfile, ifile);
     }
 
@@ -235,21 +244,62 @@ public class SSTableScanner implements ISSTableScanner
         return new KeyScanningIterator();
     }
 
-    protected class KeyScanningIterator extends AbstractIterator<OnDiskAtomIterator>
+    protected class KeyScanningIterator extends AbstractIterator<OnDiskAtomIterator> implements AutoCloseable
     {
         private DecoratedKey nextKey;
         private IndexedEntry nextEntry;
         private DecoratedKey currentKey;
         private IndexedEntry currentEntry;
         private long lastDeserialziedPos;
+        private FileMark lastDeserializedMark;
         
         protected OnDiskAtomIterator computeNext()
         {
             try
             {
-                // Check and seek() required for backwards compatablity with legacy index format
-                if (ifile instanceof RandomAccessReader && lastDeserialziedPos > 0)
-                    ifile.seek(lastDeserialziedPos);
+                // there are some cases where the iterator will be advanced more than once,
+                // so we have to do this check to make sure we're "starting" at the same offset
+                // we "last" deserialized for the next iteration.
+                if (lastDeserialziedPos > 0)
+                {
+                    if (ifile instanceof RandomAccessReader)
+                    {
+                        // handle legacy index format
+                        ifile.reset(lastDeserializedMark);
+                    }
+                    else
+                    {
+                        if (((PageAlignedReader) ifile).isPositionInsideCurrentSegment(lastDeserialziedPos))
+                        {
+                            if (((PageAlignedReader) ifile).hasNextSegment())
+                            {
+                                try
+                                {
+                                    ((PageAlignedReader) ifile).nextSegment();
+                                }
+                                catch (Exception e)
+                                {
+                                    Exception closeE = ((PageAlignedReader) ifile).getCloseException();
+                                    if (closeE != null)
+                                    {
+                                        logger.error("Attempted to call nextSegment() on a closed PageAlignedReader. Originally closed " +
+                                                     "by the following stack trace", closeE);
+                                    }
+                                    else
+                                    {
+                                        logger.error("Attempted to call nextSegment() on a closed PageAlignedReader but the closeException " +
+                                                     "was null");
+                                    }
+                                    throw e;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            ifile.reset(lastDeserializedMark);
+                        }
+                    }
+                }
 
                 if (nextEntry == null)
                 {
@@ -257,13 +307,21 @@ public class SSTableScanner implements ISSTableScanner
                     {
                         // we're starting the first range or we just passed the end of the previous range
                         if (!rangeIterator.hasNext())
+                        {
+                            maybeCloseCurrentIndexEntry();
+                            maybeCloseNextIndexEntry();
+
                             return endOfData();
+                        }
 
                         currentRange = rangeIterator.next();
                         seekToCurrentRangeStart();
 
                         if (ifile.isEOF())
                         {
+                            maybeCloseCurrentIndexEntry();
+                            maybeCloseNextIndexEntry();
+
                             return endOfData();
                         }
 
@@ -271,6 +329,7 @@ public class SSTableScanner implements ISSTableScanner
                         currentEntry = sstable.metadata.comparator.rowIndexEntrySerializer().deserialize(ifile, sstable.descriptor.version);
 
                         lastDeserialziedPos = (ifile instanceof RandomAccessReader) ? ifile.getFilePointer() : ((PageAlignedReader)ifile).getOffset();
+                        lastDeserializedMark = ifile.mark();
                     } while (!currentRange.contains(currentKey));
                 }
                 else
@@ -283,6 +342,8 @@ public class SSTableScanner implements ISSTableScanner
                 long readEnd;
                 if (ifile.isEOF())
                 {
+                    maybeCloseNextIndexEntry();
+
                     nextEntry = null;
                     nextKey = null;
                     readEnd = dfile.length();
@@ -292,9 +353,12 @@ public class SSTableScanner implements ISSTableScanner
                     if (ifile instanceof PageAlignedReader && ifile.isCurrentSegmentExausted())
                         ((PageAlignedReader)ifile).nextSegment();
 
-                    if (ifile instanceof PageAlignedReader && !((PageAlignedReader)ifile).getCurrentSubSegment().shouldUseSingleMmappedBuffer())
+                    // todo: kj... i'm using isCurrentSubSegmentPageAligned as a way to differ between
+                    // a birch segment and a normal index.. this is pretty lame.. can i do better?
+                    if (ifile instanceof PageAlignedReader && ((PageAlignedReader)ifile).isCurrentSubSegmentPageAligned())
                     {
                         lastDeserialziedPos = ((PageAlignedReader)ifile).getOffset();
+                        lastDeserializedMark = ifile.mark();
                         readEnd = currentEntry.getPosition();
                     }
                     else
@@ -303,6 +367,7 @@ public class SSTableScanner implements ISSTableScanner
                         nextKey = sstable.partitioner.decorateKey(ByteBufferUtil.readWithShortLength(ifile));
                         nextEntry = sstable.metadata.comparator.rowIndexEntrySerializer().deserialize(ifile, sstable.descriptor.version);
                         lastDeserialziedPos = (ifile instanceof PageAlignedReader) ? ((PageAlignedReader)ifile).getOffset() : ifile.getFilePointer();
+                        lastDeserializedMark = ifile.mark();
                         readEnd = nextEntry.getPosition();
                     }
 
@@ -335,6 +400,25 @@ public class SSTableScanner implements ISSTableScanner
                 sstable.markSuspect();
                 throw new CorruptSSTableException(e, sstable.getFilename());
             }
+        }
+
+        private void maybeCloseCurrentIndexEntry()
+        {
+            if (currentEntry != null)
+                currentEntry.close();
+        }
+
+        private void maybeCloseNextIndexEntry()
+        {
+            if (nextEntry != null)
+                nextEntry.close();
+        }
+
+        @Override
+        public void close() throws Exception
+        {
+            maybeCloseCurrentIndexEntry();
+            maybeCloseNextIndexEntry();
         }
     }
 

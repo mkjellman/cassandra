@@ -60,8 +60,8 @@ public class SSTableSliceIterator implements OnDiskAtomIterator, Closeable
     public SSTableSliceIterator(SSTableReader sstable, FileDataInput file, DecoratedKey key, ColumnSlice[] slices, boolean reversed, IndexedEntry indexEntry)
     {
         this.key = key;
-        this.indexEntry = indexEntry;
         reader = createReader(sstable, indexEntry, file, slices, reversed);
+        this.indexEntry = indexEntry;
     }
 
     private static OnDiskAtomIterator createReader(SSTableReader sstable, IndexedEntry indexEntry, FileDataInput file, ColumnSlice[] slices, boolean reversed)
@@ -96,6 +96,7 @@ public class SSTableSliceIterator implements OnDiskAtomIterator, Closeable
         throw new UnsupportedOperationException();
     }
 
+    @Override
     public void close() throws IOException
     {
         if (indexEntry != null)

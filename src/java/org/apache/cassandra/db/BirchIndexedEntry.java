@@ -29,22 +29,22 @@ import org.apache.cassandra.db.index.birch.AlignedSegment;
 import org.apache.cassandra.db.index.birch.BirchReader;
 import org.apache.cassandra.db.index.birch.PageAlignedReader;
 import org.apache.cassandra.io.sstable.IndexInfo;
+import org.apache.cassandra.io.util.FileUtils;
 
 /**
  * An IndexedEntry implementation that is backed by a BirchWriter Index
  */
-public class BirchIndexedEntry implements IndexedEntry
+public class BirchIndexedEntry implements IndexedEntry, AutoCloseable
 {
     private final long position;
     private final CType type;
     private final PageAlignedReader reader;
     private final BirchReader<IndexInfo> birchReader;
     private final DeletionTime deletionTime;
-    private final AlignedSegment readerSegment;
+    private final int readerSegmentIdx;
+    private final short readerSubSegmentIdx;
 
     private BirchReader<IndexInfo>.BirchIterator iterator = null;
-    private int nextIndexIdx = -1;
-    private int lastDeserializedBlock = -1;
     private boolean iteratorDirectionReversed = false;
 
     public BirchIndexedEntry(long position, CType type, PageAlignedReader reader, DeletionTime deletionTime) throws IOException
@@ -54,7 +54,8 @@ public class BirchIndexedEntry implements IndexedEntry
         this.reader = reader;
         this.deletionTime = deletionTime;
         this.birchReader = new BirchReader<>(reader);
-        this.readerSegment = reader.getCurrentSegment();
+        this.readerSegmentIdx = reader.getCurrentSegmentIdx();
+        this.readerSubSegmentIdx = reader.getCurrentSubSegmentIdx();
     }
 
     public boolean isIndexed()
@@ -95,8 +96,8 @@ public class BirchIndexedEntry implements IndexedEntry
 
     public IndexInfo getIndexInfo(Composite name, CellNameType comparator, boolean reversed) throws IOException
     {
-        assert !reader.getCurrentSubSegment().shouldUseSingleMmappedBuffer()
-               && reader.getCurrentSegment().idx == readerSegment.idx;
+        assert reader.isCurrentSubSegmentPageAligned()
+               && reader.getCurrentSegmentIdx() == readerSegmentIdx;
 
         iteratorDirectionReversed = reversed;
         return birchReader.search(name, comparator, reversed);
@@ -109,31 +110,19 @@ public class BirchIndexedEntry implements IndexedEntry
 
     public boolean hasNext()
     {
-        assert reader.getCurrentSegment().idx == readerSegment.idx;
-
-        if (lastDeserializedBlock == nextIndexIdx)
-        {
-            if (iteratorDirectionReversed)
-                nextIndexIdx--;
-            else
-                nextIndexIdx++;
-        }
-
+        assert reader.getCurrentSegmentIdx() == readerSegmentIdx;
         return iterator != null && iterator.hasNext();
     }
 
     public IndexInfo next()
     {
-        assert reader.getCurrentSegment().idx == readerSegment.idx;
-
-        lastDeserializedBlock = nextIndexIdx;
-
+        assert reader.getCurrentSegmentIdx() == readerSegmentIdx;
         return (iterator != null) ? iterator.next() : null;
     }
 
     public void startIteratorAt(Composite name, CellNameType comparator, boolean reversed) throws IOException
     {
-        assert reader.getCurrentSegment().idx == readerSegment.idx;
+        assert reader.getCurrentSegmentIdx() == readerSegmentIdx;
 
         iteratorDirectionReversed = reversed;
         iterator = birchReader.getIterator(name, comparator, reversed);
@@ -144,17 +133,19 @@ public class BirchIndexedEntry implements IndexedEntry
         return iteratorDirectionReversed;
     }
 
+    @Override
     public void close()
     {
-        // todo kjkj should BirchIndexedEntry close the reader?
-        //FileUtils.closeQuietly(reader);
+        FileUtils.closeQuietly(birchReader);
+        FileUtils.closeQuietly(reader);
     }
 
-    public void reset(boolean reversed, long position)
+    public void reset(boolean reversed)
     {
         try
         {
-            reader.setSegment(readerSegment.idx, 1);
+            // the birch index is always in the 2nd sub-segment
+            reader.setSegment(readerSegmentIdx, 1);
             this.iterator = birchReader.getIterator(type, reversed);
         }
         catch (IOException e)
@@ -162,8 +153,6 @@ public class BirchIndexedEntry implements IndexedEntry
             throw new RuntimeException(e);
         }
 
-        lastDeserializedBlock = -1;
-        nextIndexIdx = -1;
         iteratorDirectionReversed = reversed;
     }
 }

@@ -49,7 +49,7 @@ public class IndexInfoSerializer implements BSerializer<IndexInfo>
     {
         long offset = reader.readLong();
         long size = reader.readLong();
-        Composite cKey = type.serializer().deserialize(key);
+        Composite cKey = type.fromByteBuffer(key);
         return new IndexInfo(cKey, cKey, offset, size);
     }
 

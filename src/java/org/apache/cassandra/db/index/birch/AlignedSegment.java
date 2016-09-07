@@ -18,25 +18,15 @@
 
 package org.apache.cassandra.db.index.birch;
 
-import java.io.DataInput;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
 import com.google.common.base.Joiner;
 
-import org.apache.cassandra.db.TypeSizes;
-import org.apache.cassandra.io.ISerializer;
-import org.apache.cassandra.io.util.DataOutputPlus;
-
 public class AlignedSegment
 {
-    public static final AlignedSegmentSerializer SERIALIZER = new AlignedSegmentSerializer();
-
     public final int idx;
     public final long offset;
-    public final long endOffset;
-    public final long alignedEndOffset;
     public final long length;
     public final long alignedLength;
     private final List<AlignedSubSegment> subSegments;
@@ -52,8 +42,6 @@ public class AlignedSegment
         this.offset = offset;
         this.length = length;
         this.alignedLength = alignedLength;
-        this.endOffset = offset + length;
-        this.alignedEndOffset = offset + alignedLength;
         this.subSegments = subSegments;
     }
 
@@ -74,7 +62,7 @@ public class AlignedSegment
 
     public boolean isPositionInSegment(long pos)
     {
-        return pos >= offset && pos <= endOffset;
+        return pos >= offset && pos <= offset + length;
     }
 
     @Override
@@ -85,61 +73,5 @@ public class AlignedSegment
         return String.format("[Segment %d] offset: %d length: %d alignedLength: %d " +
                              "numSubSegments: %d {%s}", idx, offset, length, alignedLength,
                              subSegments.size(), joinedSubSegments);
-    }
-
-    public static class AlignedSegmentSerializer implements ISerializer<AlignedSegment>
-    {
-        public void serialize(AlignedSegment alignedSegment, DataOutputPlus out) throws IOException
-        {
-            out.writeInt(alignedSegment.idx);
-            out.writeLong(alignedSegment.offset);
-            out.writeLong(alignedSegment.length);
-            out.writeLong(alignedSegment.alignedLength);
-
-            out.writeInt(alignedSegment.subSegments.size());
-
-            for (AlignedSubSegment subSegment : alignedSegment.subSegments)
-            {
-                AlignedSubSegment.SERIALIZER.serialize(subSegment, out);
-            }
-        }
-
-        public AlignedSegment deserialize(DataInput in) throws IOException
-        {
-            int idx = in.readInt();
-            long offset = in.readLong();
-            long length = in.readLong();
-            long alignedLength = in.readLong();
-
-            AlignedSegment segment = new AlignedSegment(idx, offset, length, alignedLength);
-
-            int numSubSegments = in.readInt();
-
-            for (int i = 0; i < numSubSegments; i++)
-            {
-                segment.addSubSegment(AlignedSubSegment.SERIALIZER.deserialize(in));
-            }
-
-            return segment;
-        }
-
-        public long serializedSize(AlignedSegment alignedSegment, TypeSizes type)
-        {
-            long size = 0;
-
-            size += type.sizeof(alignedSegment.idx);
-            size += type.sizeof(alignedSegment.offset);
-            size += type.sizeof(alignedSegment.length);
-            size += type.sizeof(alignedSegment.alignedLength);
-
-            size += type.sizeof(alignedSegment.subSegments.size());
-
-            for (AlignedSubSegment subSegment : alignedSegment.subSegments)
-            {
-                size += AlignedSubSegment.SERIALIZER.serializedSize(subSegment, type);
-            }
-
-            return size;
-        }
     }
 }
