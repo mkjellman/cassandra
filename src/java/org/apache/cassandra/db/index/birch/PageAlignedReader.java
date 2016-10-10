@@ -342,7 +342,7 @@ public class PageAlignedReader implements FileDataInput, Closeable
         setSegment(currentSegmentIdx + 1);
     }
 
-    public long getOffset() throws IOException
+    public long getOffset()
     {
         return raf.getPosition();
     }
@@ -550,22 +550,15 @@ public class PageAlignedReader implements FileDataInput, Closeable
 
     public FileMark mark()
     {
-        try
-        {
-            return new PageAlignedFileMark(getOffset(), 0, currentSegmentIdx, currentSubSegmentIdx);
-        }
-        catch (IOException e)
-        {
-            throw new RuntimeException(e);
-        }
+        return new PageAlignedFileMark(getOffset(), currentSegmentIdx, currentSubSegmentIdx);
     }
 
     public void reset(FileMark mark) throws IOException
     {
         PageAlignedFileMark alignedMark = (PageAlignedFileMark) mark;
-        if (!isPositionInsideCurrentSubSegment(alignedMark.rafPointer))
+        if (!isPositionInsideCurrentSubSegment(alignedMark.pointer))
             setCurrentBoundsForSegment(alignedMark.currentSegmentIdx, alignedMark.currentSubSegmentIdx);
-        seek(alignedMark.rafPointer);
+        seek(alignedMark.pointer);
     }
 
     public long bytesPastMark(FileMark mark)
@@ -575,14 +568,7 @@ public class PageAlignedReader implements FileDataInput, Closeable
 
     public long getFilePointer()
     {
-        try
-        {
-            return getOffset();
-        }
-        catch (IOException e)
-        {
-            throw new RuntimeException(e);
-        }
+        return getOffset();
     }
 
     /**

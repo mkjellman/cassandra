@@ -113,14 +113,13 @@ public class BirchReader<T> implements Closeable
      */
     private KeyAndOffsetPtr getKeyAndOffsetPtr(int idx) throws IOException
     {
-        reader.seek(reader.getFilePointer());
         PageAlignedFileMark segmentStartMark = (PageAlignedFileMark) reader.mark();
 
         short entries = reader.readShort();
 
         // check if element has overflow length encoded after key
         int byteForIdxInOverflowField = Byte.BYTES * (int) (idx / 8.0);
-        reader.seek(segmentStartMark.getSyntheticPointer() + Short.BYTES
+        reader.seek(segmentStartMark.pointer + Short.BYTES
                     + ((entries * Short.BYTES) + Short.BYTES) + (entries * Long.BYTES) + byteForIdxInOverflowField);
         byte hasOverflowByte = reader.readByte();
         boolean hasOverflow = (hasOverflowByte >> (idx % 8) & 1) == 1;
@@ -128,7 +127,7 @@ public class BirchReader<T> implements Closeable
         // Skip to internal offsets section for this element to find where to start reading the key.
         // Get this elements offset and elm + 1's offset. We calculate the length to read as
         // (elm + 1 offset) - (elm offset)
-        reader.seek(segmentStartMark.getSyntheticPointer() + Short.BYTES + (idx * Short.BYTES));
+        reader.seek(segmentStartMark.pointer + Short.BYTES + (idx * Short.BYTES));
         short offsetInNodeToKey = reader.readShort();
         short offsetOfNextKey = reader.readShort();
         int lengthOfKey = offsetOfNextKey - offsetInNodeToKey;
@@ -142,11 +141,11 @@ public class BirchReader<T> implements Closeable
 
         // skip into this segment past encoded elements and encoded key offsets. Then skip idx number of Longs
         // into the encoded offsets to get the offset for this element
-        reader.seek(segmentStartMark.getSyntheticPointer() + Short.BYTES + ((entries * Short.BYTES) + Short.BYTES) + (idx * Long.BYTES));
+        reader.seek(segmentStartMark.pointer + Short.BYTES + ((entries * Short.BYTES) + Short.BYTES) + (idx * Long.BYTES));
         long ptrOffset = reader.readLong();
 
         // skip to the starting offset of the key
-        reader.seek(segmentStartMark.getSyntheticPointer() + offsetInNodeToKey);
+        reader.seek(segmentStartMark.pointer + offsetInNodeToKey);
 
         ByteBuffer key = getKey(lengthOfKey, hasOverflow);
 
@@ -165,7 +164,6 @@ public class BirchReader<T> implements Closeable
      */
     private T getElement(int idx, CType type) throws IOException
     {
-        reader.seek(reader.getFilePointer());
         PageAlignedFileMark segmentStartMark = (PageAlignedFileMark) reader.mark();
 
         short entries = reader.readShort();
@@ -185,7 +183,7 @@ public class BirchReader<T> implements Closeable
         short offsetOfNextKey = reader.readShort();
         int lengthOfKey = offsetOfNextKey - offsetInNodeToKey;
 
-        reader.seek(segmentStartMark.getSyntheticPointer() + offsetInNodeToKey);
+        reader.seek(segmentStartMark.pointer + offsetInNodeToKey);
 
         ByteBuffer key = getKey(lengthOfKey, hasOverflow);
 
@@ -294,7 +292,6 @@ public class BirchReader<T> implements Closeable
      */
     private Pair<T, Integer> binarySearchLeaf(Composite searchKey, CType type, boolean reversed) throws IOException
     {
-        reader.seek(reader.getFilePointer());
         PageAlignedFileMark nodeStartingMark = (PageAlignedFileMark) reader.mark();
 
         if (searchKey.isEmpty())
@@ -369,7 +366,6 @@ public class BirchReader<T> implements Closeable
     {
         assert searchKey != null;
 
-        reader.seek(reader.getFilePointer());
         PageAlignedFileMark nodeStartingMark = (PageAlignedFileMark) reader.mark();
 
         if (searchKey.isEmpty())
@@ -529,12 +525,13 @@ public class BirchReader<T> implements Closeable
                     offset = binarySearchNode(searchKey, type, reversed);
                 }
 
-                currentPage = (int) (offset - descriptor.getFirstLeafOffset()) / descriptor.getAlignedPageSize();
+                this.currentPage = (int) (offset - descriptor.getFirstLeafOffset()) / descriptor.getAlignedPageSize();
 
                 // go to leaf...
                 reader.seek(offset);
 
-                currentElmIdx = binarySearchLeaf(searchKey, type, reversed).right;
+                int binarySearchRes = binarySearchLeaf(searchKey, type, reversed).right;
+                this.currentElmIdx = (binarySearchRes < 0) ? 0 : binarySearchRes;
             }
             else
             {
@@ -546,7 +543,7 @@ public class BirchReader<T> implements Closeable
                     reader.seek(descriptor.getFirstLeafOffset() + ((currentPage - 1) * (descriptor.getAlignedPageSize())));
                     PageAlignedFileMark currentPageStart = (PageAlignedFileMark) reader.mark();
                     short numElements = reader.readShort();
-                    this.currentElmIdx = numElements - 1;
+                    this.currentElmIdx = (numElements == 1) ? 0 : numElements - 1;
                     reader.reset(currentPageStart);
                 }
                 else
@@ -580,7 +577,8 @@ public class BirchReader<T> implements Closeable
             {
                 if (reversed)
                 {
-                    reader.seek(descriptor.getFirstLeafOffset() + ((currentPage - 1) * (descriptor.getAlignedPageSize())));
+                    int newCurrentPage = (currentPage == 0) ? 0 : currentPage - 1;
+                    reader.seek(descriptor.getFirstLeafOffset() + (newCurrentPage * (descriptor.getAlignedPageSize())));
                 }
                 else
                 {
@@ -627,7 +625,7 @@ public class BirchReader<T> implements Closeable
                     }
                 }
 
-                reader.seek(leafOffsetStart.getSyntheticPointer());
+                reader.seek(leafOffsetStart.pointer);
                 T next = getElement(currentElmIdx, type);
 
                 if (reversed)

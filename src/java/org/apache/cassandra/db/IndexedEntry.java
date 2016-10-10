@@ -51,6 +51,8 @@ public interface IndexedEntry extends IMeasurableMemory, Iterator<IndexInfo>
 
     boolean isReversed();
 
+    IndexInfo peek();
+
     long getPosition();
 
     boolean isIndexed();

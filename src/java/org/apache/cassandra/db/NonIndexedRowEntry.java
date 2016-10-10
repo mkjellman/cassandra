@@ -96,6 +96,11 @@ public class NonIndexedRowEntry implements IndexedEntry
         throw new UnsupportedOperationException();
     }
 
+    public IndexInfo peek()
+    {
+        throw new UnsupportedOperationException();
+    }
+
     public void startIteratorAt(Composite name, CellNameType comparator, boolean reversed)
     {
         throw new UnsupportedOperationException();

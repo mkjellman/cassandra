@@ -88,6 +88,26 @@ public class IndexInfo implements TreeSerializable
         }
     }
 
+    public ByteBuffer getFirstName()
+    {
+        return firstName.duplicate();
+    }
+
+    public Composite getFirstNameAsComposite()
+    {
+        return type.fromByteBuffer(firstName.duplicate());
+    }
+
+    public ByteBuffer getLastName()
+    {
+        return (lastName == null) ? firstName : lastName;
+    }
+
+    public Composite getLastNameAsComposite()
+    {
+        return (lastName == null) ? getFirstNameAsComposite() : type.fromByteBuffer(lastName.duplicate());
+    }
+
     public long unsharedHeapSize()
     {
         return EMPTY_SIZE + firstName.unsharedHeapSize() + lastName.unsharedHeapSize();

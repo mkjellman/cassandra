@@ -18,11 +18,16 @@
 
 package org.apache.cassandra.db.index.birch;
 
+import java.io.DataInput;
 import java.io.EOFException;
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.RandomAccessFile;
+import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.file.StandardOpenOption;
+
+import org.apache.cassandra.utils.CLibrary;
 
 /**
  * Extends RandomAccessFile by buffering a certain amount of bytes onto the heap
@@ -49,7 +54,7 @@ import java.io.RandomAccessFile;
  * @see PageAlignedWriter
  * @see PageAlignedReader
  */
-public class BufferingPageAlignedReader extends RandomAccessFile
+public class BufferingPageAlignedReader extends InputStream implements DataInput, AutoCloseable
 {
     private static final int DEFAULT_BUFFER_SIZE = 1 << 12; // 4kb
     private static final int MINIMUM_BUFFER_SIZE = 2 << 9; // 1kb
@@ -57,10 +62,11 @@ public class BufferingPageAlignedReader extends RandomAccessFile
 
     private final File file;
     private final long length;
+    private final FileChannel channel;
 
     private boolean isClosed;
 
-    private byte[] buffer;
+    private ByteBuffer buffer;
     private int bufferSize;
 
     private int currentBufferPosition;
@@ -69,15 +75,16 @@ public class BufferingPageAlignedReader extends RandomAccessFile
     private long currentBufferStartOffset;
     private long currentBufferEndOffset;
 
-    public BufferingPageAlignedReader(File file, int bufferSize) throws FileNotFoundException
+    public BufferingPageAlignedReader(File file, int bufferSize) throws IOException
     {
-        super(file, "r");
+        this.channel = FileChannel.open(file.toPath(), StandardOpenOption.READ);
         this.file = file;
         this.bufferSize = bufferSize;
         this.length = file.length();
+        CLibrary.tryDisableReadAhead(CLibrary.getfd(channel), 0, length);
     }
 
-    public BufferingPageAlignedReader(File file) throws FileNotFoundException
+    public BufferingPageAlignedReader(File file) throws IOException
     {
         this(file, DEFAULT_BUFFER_SIZE);
     }
@@ -95,6 +102,17 @@ public class BufferingPageAlignedReader extends RandomAccessFile
     {
         assert bufferSize >= MINIMUM_BUFFER_SIZE && bufferSize <= MAXIMUM_BUFFER_SIZE;
         this.bufferSize = bufferSize;
+    }
+
+    public long length()
+    {
+        return length;
+    }
+
+    // don't make this public, this is only for seeking WITHIN the current mapped segment
+    protected void seekInternal(int pos)
+    {
+        position = pos;
     }
 
     /**
@@ -139,22 +157,34 @@ public class BufferingPageAlignedReader extends RandomAccessFile
 
         if (!isPositionWithinCurrentBufferBoundaries(position) || buffer == null)
         {
-            if (buffer == null || buffer.length != bufferSize)
+            if (buffer == null || buffer.capacity() != bufferSize)
             {
-                this.buffer = new byte[bufferSize];
+                this.buffer = ByteBuffer.wrap(new byte[bufferSize]);
             }
 
             // we always want to read from the nearest aligned boundary (as determined by the buffer size,
             // which should match the alignment boundaries the PageAligned file was written out with)
             long nextAlignedOffset = getNextAlignedOffset(position);
-            super.seek(nextAlignedOffset);
+            channel.position(nextAlignedOffset);
 
             // if we have less bytes than the buffer size available from the nearest aligned offset to the end of the file
             // we only want to map the remaining bytes available from the nearest aligned offset
             int lengthToRead = (nextAlignedOffset + bufferSize > length) ? (int) (length - nextAlignedOffset) : bufferSize;
 
+            this.buffer.position(0);
+            this.buffer.limit(lengthToRead);
+
             // transfer the available bytes into the buffer
-            super.read(buffer, 0, lengthToRead);
+            int actuallyRead = 0;
+            while (actuallyRead < lengthToRead)
+            {
+                int read = channel.read(buffer);
+                if (read < 0)
+                    throw new EOFException(); // should never happen, lengthToRead incorrectly calculated?
+                channel.position(nextAlignedOffset + read);
+                actuallyRead += read;
+            }
+
             // update the relative position inside the new current buffer to match the current absolute position
             currentBufferPosition = (int) (position - nextAlignedOffset);
             // as we re-use the same backing buffer, we need to track the number of bytes to use the byte[] buffer's length
@@ -174,7 +204,6 @@ public class BufferingPageAlignedReader extends RandomAccessFile
         return currentBufferUsableLength - currentBufferPosition;
     }
 
-    @Override
     public void seek(long newPosition) throws IOException
     {
         if (newPosition < 0)
@@ -208,7 +237,6 @@ public class BufferingPageAlignedReader extends RandomAccessFile
         currentBufferPosition = (int) (position - currentBufferStartOffset);
     }
 
-    @Override
     public int read() throws IOException
     {
         if (isEOF())
@@ -216,19 +244,17 @@ public class BufferingPageAlignedReader extends RandomAccessFile
 
         maybeUpdateBuffer();
 
-        int ret = buffer[currentBufferPosition++] & 0xff;
+        int ret = buffer.get(currentBufferPosition++) & 0xff;
         position++;
 
         return ret;
     }
 
-    @Override
     public int read(byte[] b) throws IOException
     {
         return read(b, 0, b.length);
     }
 
-    @Override
     public int read(byte[] b, int off, int len) throws IOException
     {
         if (isClosed || position + len > length)
@@ -243,7 +269,7 @@ public class BufferingPageAlignedReader extends RandomAccessFile
             maybeUpdateBuffer();
 
             int bytesToRead = (bytesRemainingToRead <= bufferRemainingBytes()) ? bytesRemainingToRead : bufferRemainingBytes();
-            System.arraycopy(buffer, currentBufferPosition, b, currentDestOffset, bytesToRead);
+            System.arraycopy(buffer.array(), currentBufferPosition, b, currentDestOffset, bytesToRead);
             currentDestOffset += bytesToRead;
             position += bytesToRead;
             currentBufferPosition += bytesToRead;
@@ -251,6 +277,99 @@ public class BufferingPageAlignedReader extends RandomAccessFile
         }
 
         return len;
+    }
+
+    public void readFully(byte[] b) throws IOException
+    {
+        this.read(b);
+    }
+
+    public void readFully(byte[] b, int off, int len) throws IOException
+    {
+        this.read(b, off, len);
+    }
+
+    public int skipBytes(int n) throws IOException
+    {
+        assert n >= 0 : "skipping negative bytes is illegal: " + n;
+        if (n == 0)
+            return 0;
+        seek(position + n);
+        return n;
+    }
+
+    public String readLine() throws IOException
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    public String readUTF() throws IOException
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    public boolean readBoolean() throws IOException
+    {
+        return read() == 1;
+    }
+
+    public byte readByte() throws IOException
+    {
+        return (byte) read();
+    }
+
+    public int readUnsignedByte() throws IOException
+    {
+        return (byte) read();
+    }
+
+    public short readShort() throws IOException
+    {
+        int ch1 = this.read();
+        int ch2 = this.read();
+        if ((ch1 | ch2) < 0)
+            throw new EOFException();
+        return (short)((ch1 << 8) + (ch2 << 0));
+    }
+
+    public int readUnsignedShort() throws IOException
+    {
+        int ch1 = readByte() & 0xFF;
+        int ch2 = readByte() & 0xFF;
+        if ((ch1 | ch2) < 0)
+            throw new IOException("Failed to read unsigned short as deserialized value is bogus/negative");
+        return (ch1 << 8) + (ch2);
+    }
+
+    public char readChar() throws IOException
+    {
+        return (char) read();
+    }
+
+    public int readInt() throws IOException
+    {
+        int ch1 = this.read();
+        int ch2 = this.read();
+        int ch3 = this.read();
+        int ch4 = this.read();
+        if ((ch1 | ch2 | ch3 | ch4) < 0)
+            throw new EOFException();
+        return ((ch1 << 24) + (ch2 << 16) + (ch3 << 8) + (ch4 << 0));
+    }
+
+    public long readLong() throws IOException
+    {
+        return ((long)(readInt()) << 32) + (readInt() & 0xFFFFFFFFL);
+    }
+
+    public float readFloat() throws IOException
+    {
+        return Float.intBitsToFloat(readInt());
+    }
+
+    public double readDouble() throws IOException
+    {
+        return Double.longBitsToDouble(readLong());
     }
 
     /**
@@ -273,7 +392,7 @@ public class BufferingPageAlignedReader extends RandomAccessFile
             return;
 
         this.buffer = null;
-        super.close();
+        channel.close();
         isClosed = true;
     }
 }

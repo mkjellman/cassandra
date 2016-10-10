@@ -22,27 +22,19 @@ import org.apache.cassandra.io.util.FileMark;
 
 public class PageAlignedFileMark implements FileMark
 {
-    public final long rafPointer;
-    public final long currentSegmentPointer;
+    public final long pointer;
     public final int currentSegmentIdx;
     public final short currentSubSegmentIdx;
 
-    public PageAlignedFileMark(long rafPointer, long currentSegmentPointer,
-                               int currentSegmentIdx, short currentSubSegmentIdx)
+    public PageAlignedFileMark(long pointer, int currentSegmentIdx, short currentSubSegmentIdx)
     {
-        this.rafPointer = rafPointer;
-        this.currentSegmentPointer = currentSegmentPointer;
+        this.pointer = pointer;
         this.currentSegmentIdx = currentSegmentIdx;
         this.currentSubSegmentIdx = currentSubSegmentIdx;
     }
 
-    public PageAlignedFileMark(long rafPointer)
+    public PageAlignedFileMark(long pointer)
     {
-        this(rafPointer, 0, 0, (short) 0);
-    }
-
-    public long getSyntheticPointer()
-    {
-        return rafPointer + currentSegmentPointer;
+        this(pointer, 0, (short) 0);
     }
 }

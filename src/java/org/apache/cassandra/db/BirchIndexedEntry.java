@@ -120,6 +120,11 @@ public class BirchIndexedEntry implements IndexedEntry, AutoCloseable
         return (iterator != null) ? iterator.next() : null;
     }
 
+    public IndexInfo peek()
+    {
+        return (iterator != null) ? iterator.peek() : null;
+    }
+
     public void startIteratorAt(Composite name, CellNameType comparator, boolean reversed) throws IOException
     {
         assert reader.getCurrentSegmentIdx() == readerSegmentIdx;

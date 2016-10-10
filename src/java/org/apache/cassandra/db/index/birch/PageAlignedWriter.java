@@ -19,7 +19,6 @@
 package org.apache.cassandra.db.index.birch;
 
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
@@ -28,6 +27,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.io.util.DataOutputStreamAndChannel;
@@ -185,6 +185,7 @@ public class PageAlignedWriter implements WritableByteChannel
     public final DataOutputPlus stream; // stream is eventually flushed and written to out
     private final RandomAccessFile out; // out contains the aligned data written to stream
     private final String filePath;
+    private int fd;
     private int directoryFD;
     // directory should be synced only after first file sync, in other words, only once per file
     private boolean directorySynced = false;
@@ -209,15 +210,15 @@ public class PageAlignedWriter implements WritableByteChannel
 
     public PageAlignedWriter(File file)
     {
+        filePath = file.getAbsolutePath();
         try
         {
             out = new RandomAccessFile(file, "rw");
-            filePath = file.getAbsolutePath();
             stream = new DataOutputStreamAndChannel(this);
         }
-        catch (FileNotFoundException e)
+        catch (IOException e)
         {
-            throw new RuntimeException(e);
+            throw new FSReadError(e, filePath);
         }
 
         this.directoryFD = CLibrary.tryOpenDirectory(file.getParent());
@@ -460,7 +461,7 @@ public class PageAlignedWriter implements WritableByteChannel
 
     public void reset(PageAlignedFileMark mark) throws IOException
     {
-        out.seek(mark.rafPointer);
+        out.seek(mark.pointer);
     }
 
     public long getFilePointer() throws IOException

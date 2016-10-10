@@ -28,6 +28,7 @@ import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.composites.CellNameType;
 import org.apache.cassandra.db.composites.Composite;
 import org.apache.cassandra.db.filter.ColumnSlice;
+import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.sstable.CorruptSSTableException;
 import org.apache.cassandra.io.sstable.IndexInfo;
 import org.apache.cassandra.io.sstable.SSTableReader;
@@ -233,16 +234,18 @@ class IndexedSliceReader extends AbstractIterator<OnDiskAtom> implements OnDiskA
         // where this row starts
         private final long columnsStart;
 
+        private IndexInfo lastDeserializedBlock = null;
+
         // For reversed, keep columns at the beginning of the last deserialized block that
         // may still match a slice
         private final Deque<OnDiskAtom> prefetched;
 
         public IndexedBlockFetcher(long columnsStart)
         {
-            super(0);
+            super(-1);
             this.columnsStart = columnsStart;
             this.prefetched = reversed ? new ArrayDeque<OnDiskAtom>() : null;
-            //getNextIndexedSlice();
+            getNextIndexedSlice();
         }
 
         protected IndexInfo getNextIndexedSlice()
@@ -250,44 +253,37 @@ class IndexedSliceReader extends AbstractIterator<OnDiskAtom> implements OnDiskA
             // todo: kjkj this code is extremely fragle and complicated
             // still need to ensure reading the legacy index formats works as expected
 
-            //if (currentSliceIdx < 0)
-                //indexedEntry.reset(reversed, columnsStart);
-
             while (++currentSliceIdx < slices.length)
             {
-                IndexInfo info;
                 try
                 {
-                    // Check if we can exclude this slice entirely from the index
-                    info = indexedEntry.getIndexInfo(slices[currentSliceIdx].start, comparator, reversed);
+                    indexedEntry.startIteratorAt(slices[currentSliceIdx].start, comparator, reversed);
+                    if (!indexedEntry.hasNext())
+                        // no index block for that slice
+                        continue;
+
+                    IndexInfo info = indexedEntry.peek();
+                    if (reversed)
+                    {
+                        // todo: kjellman -> handle legacy..
+                        if (!isAfterSliceFinish(info.getFirstNameAsComposite()))
+                            return info;
+
+                        //if (!isBeforeSliceStart(info.lastName))
+                        //return info;
+                    }
+                    else
+                    {
+                        if (!isAfterSliceFinish(info.getFirstNameAsComposite()))
+                            return info;
+                    }
                 }
                 catch (IOException e)
                 {
-                    throw new RuntimeException(e);
-                }
-                if (info == null)
-                {
-                    // no index block for that slice
-                    continue;
-                }
-
-                if (reversed)
-                {
-                    // todo: kjellman -> handle legacy..
-                    if (!isAfterSliceFinish(info.firstName))
-                        return info;
-
-                    //if (!isBeforeSliceStart(info.lastName))
-                        //return info;
-                }
-                else
-                {
-                    if (!isAfterSliceFinish(info.firstName))
-                        return info;
+                    throw new FSReadError(e, file.getPath());
                 }
             }
 
-            //indexedEntry.reset(reversed, columnsStart);
             return null; //todo: kjellman; checking for null all over the place is lame.. use Optional instead?
         }
 
@@ -379,6 +375,19 @@ class IndexedSliceReader extends AbstractIterator<OnDiskAtom> implements OnDiskA
 
             IndexInfo currentIndex = indexedEntry.next();
 
+            // check if the last indexed block we added in a previous iteration
+            // isn't going to be the same block returned now, otherwise we'll get
+            // duplicates. This will happen if you have multiple slices that overlap
+            if (lastDeserializedBlock != null && currentIndex.offset == lastDeserializedBlock.offset)
+            {
+                if (indexedEntry.hasNext())
+                    currentIndex = indexedEntry.next();
+                else
+                    return false;
+            }
+
+            lastDeserializedBlock = currentIndex;
+
             /* seek to the correct offset to the data, and calculate the data size */
             long positionToSeek = columnsStart + currentIndex.offset;
 
@@ -456,8 +465,6 @@ class IndexedSliceReader extends AbstractIterator<OnDiskAtom> implements OnDiskA
                             if (reversed)
                                 prefetched.clear();
                             break;
-                        } else {
-                            currentIndex = nextIndexedSlice;
                         }
 
                         // Even if the next slice may have column in this blocks, if we're reversed, those columns have been
