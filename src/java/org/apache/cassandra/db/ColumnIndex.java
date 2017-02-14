@@ -24,7 +24,6 @@ import com.google.common.annotations.VisibleForTesting;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.rows.*;
-import org.apache.cassandra.io.sstable.IndexHelper;
 import org.apache.cassandra.io.sstable.format.SSTableFlushObserver;
 import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.util.SequentialWriter;
@@ -33,11 +32,11 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 public class ColumnIndex
 {
     public final long partitionHeaderLength;
-    public final List<IndexHelper.IndexInfo> columnsIndex;
+    public final List<IndexInfo> columnsIndex;
 
-    private static final ColumnIndex EMPTY = new ColumnIndex(-1, Collections.<IndexHelper.IndexInfo>emptyList());
+    private static final ColumnIndex EMPTY = new ColumnIndex(-1, Collections.<IndexInfo>emptyList());
 
-    private ColumnIndex(long partitionHeaderLength, List<IndexHelper.IndexInfo> columnsIndex)
+    private ColumnIndex(long partitionHeaderLength, List<IndexInfo> columnsIndex)
     {
         assert columnsIndex != null;
 
@@ -74,7 +73,7 @@ public class ColumnIndex
         private final SerializationHeader header;
         private final int version;
 
-        private final List<IndexHelper.IndexInfo> columnsIndex = new ArrayList<>();
+        private final List<IndexInfo> columnsIndex = new ArrayList<>();
         private final long initialPosition;
         private long headerLength = -1;
 
@@ -136,7 +135,7 @@ public class ColumnIndex
 
         private void addIndexBlock()
         {
-            IndexHelper.IndexInfo cIndexInfo = new IndexHelper.IndexInfo(firstClustering,
+            IndexInfo cIndexInfo = new IndexInfo(firstClustering,
                                                                          lastClustering,
                                                                          startPosition,
                                                                          currentPosition() - startPosition,

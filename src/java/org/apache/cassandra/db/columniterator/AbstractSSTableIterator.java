@@ -18,6 +18,7 @@
 package org.apache.cassandra.db.columniterator;
 
 import java.io.IOException;
+import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -28,7 +29,6 @@ import org.apache.cassandra.db.filter.ColumnFilter;
 import org.apache.cassandra.db.rows.*;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.CorruptSSTableException;
-import org.apache.cassandra.io.sstable.IndexHelper;
 import org.apache.cassandra.io.util.FileDataInput;
 import org.apache.cassandra.io.util.DataPosition;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -56,7 +56,7 @@ abstract class AbstractSSTableIterator implements UnfilteredRowIterator
     protected AbstractSSTableIterator(SSTableReader sstable,
                                       FileDataInput file,
                                       DecoratedKey key,
-                                      RowIndexEntry indexEntry,
+                                      IndexedEntry indexEntry,
                                       Slices slices,
                                       ColumnFilter columnFilter)
     {
@@ -88,9 +88,9 @@ abstract class AbstractSSTableIterator implements UnfilteredRowIterator
                 {
                     // Not indexed (or is reading static), set to the beginning of the partition and read partition level deletion there
                     if (file == null)
-                        file = sstable.getFileDataInput(indexEntry.position);
+                        file = sstable.getFileDataInput(indexEntry.getPosition());
                     else
-                        file.seek(indexEntry.position);
+                        file.seek(indexEntry.getPosition());
 
                     ByteBufferUtil.skipShortLength(file); // Skip partition key
                     this.partitionLevelDeletion = DeletionTime.serializer.deserialize(file);
@@ -169,9 +169,9 @@ abstract class AbstractSSTableIterator implements UnfilteredRowIterator
         }
     }
 
-    protected abstract Reader createReaderInternal(RowIndexEntry indexEntry, FileDataInput file, boolean shouldCloseFile);
+    protected abstract Reader createReaderInternal(IndexedEntry indexEntry, FileDataInput file, boolean shouldCloseFile);
 
-    private Reader createReader(RowIndexEntry indexEntry, FileDataInput file, boolean shouldCloseFile)
+    private Reader createReader(IndexedEntry indexEntry, FileDataInput file, boolean shouldCloseFile)
     {
         return slices.isEmpty() ? new NoRowsReader(file, shouldCloseFile)
                                 : createReaderInternal(indexEntry, file, shouldCloseFile);
@@ -413,8 +413,8 @@ abstract class AbstractSSTableIterator implements UnfilteredRowIterator
         private final Reader reader;
         private final ClusteringComparator comparator;
 
-        private final RowIndexEntry indexEntry;
-        private final List<IndexHelper.IndexInfo> indexes;
+        private final IndexedEntry indexEntry;
+        private final List<IndexInfo> indexes;
         private final boolean reversed;
 
         private int currentIndexIdx;
@@ -422,14 +422,14 @@ abstract class AbstractSSTableIterator implements UnfilteredRowIterator
         // Marks the beginning of the block corresponding to currentIndexIdx.
         private DataPosition mark;
 
-        public IndexState(Reader reader, ClusteringComparator comparator, RowIndexEntry indexEntry, boolean reversed)
+        public IndexState(Reader reader, ClusteringComparator comparator, IndexedEntry indexEntry, boolean reversed)
         {
             this.reader = reader;
             this.comparator = comparator;
             this.indexEntry = indexEntry;
-            this.indexes = indexEntry.columnsIndex();
+            this.indexes = indexEntry.getAllColumnIndexes();
             this.reversed = reversed;
-            this.currentIndexIdx = reversed ? indexEntry.columnsIndex().size() : -1;
+            this.currentIndexIdx = reversed ? indexEntry.entryCount() : -1;
         }
 
         public boolean isDone()
@@ -453,7 +453,7 @@ abstract class AbstractSSTableIterator implements UnfilteredRowIterator
 
         private long columnOffset(int i)
         {
-            return indexEntry.position + indexes.get(i).offset;
+            return indexEntry.getPosition() + indexes.get(i).offset;
         }
 
         public int blocksCount()
@@ -511,26 +511,82 @@ abstract class AbstractSSTableIterator implements UnfilteredRowIterator
             return currentIndexIdx;
         }
 
-        public IndexHelper.IndexInfo currentIndex()
+        public IndexInfo currentIndex()
         {
             return index(currentIndexIdx);
         }
 
-        public IndexHelper.IndexInfo index(int i)
+        public IndexInfo index(int i)
         {
             return indexes.get(i);
         }
 
         // Finds the index of the first block containing the provided bound, starting at the provided index.
         // Will be -1 if the bound is before any block, and blocksCount() if it is after every block.
-        public int findBlockIndex(ClusteringBound bound, int fromIdx)
+        public int findBlockIndex(ClusteringBound bound, int fromIdx) throws IOException
         {
             if (bound == ClusteringBound.BOTTOM)
                 return -1;
             if (bound == ClusteringBound.TOP)
                 return blocksCount();
 
-            return IndexHelper.indexFor(bound, indexes, comparator, reversed, fromIdx);
+            return indexFor(bound, fromIdx);
+        }
+
+        public int indexFor(ClusteringPrefix name, int lastIndex) throws IOException
+        {
+            IndexInfo target = new IndexInfo(name, name, 0, 0, null);
+            /*
+            Take the example from the unit test, and say your index looks like this:
+            [0..5][10..15][20..25]
+            and you look for the slice [13..17].
+
+            When doing forward slice, we are doing a binary search comparing 13 (the start of the query)
+            to the lastName part of the index slot. You'll end up with the "first" slot, going from left to right,
+            that may contain the start.
+
+            When doing a reverse slice, we do the same thing, only using as a start column the end of the query,
+            i.e. 17 in this example, compared to the firstName part of the index slots.  bsearch will give us the
+            first slot where firstName > start ([20..25] here), so we subtract an extra one to get the slot just before.
+            */
+            int startIdx = 0;
+            int endIdx = indexEntry.entryCount() - 1;
+
+            if (reversed)
+            {
+                if (lastIndex < endIdx)
+                {
+                    endIdx = lastIndex;
+                }
+            }
+            else
+            {
+                if (lastIndex > 0)
+                {
+                    startIdx = lastIndex;
+                }
+            }
+
+            int index = binarySearch(target, comparator.indexComparator(reversed), startIdx, endIdx);
+            return (index < 0 ? -index - (reversed ? 2 : 1) : index);
+        }
+
+        private int binarySearch(IndexInfo key, Comparator<IndexInfo> c, int low, int high) throws IOException
+        {
+            while (low <= high)
+            {
+                int mid = (low + high) >>> 1;
+                IndexInfo midVal = index(mid);
+                int cmp = c.compare(midVal, key);
+
+                if (cmp < 0)
+                    low = mid + 1;
+                else if (cmp > 0)
+                    high = mid - 1;
+                else
+                    return mid;
+            }
+            return -(low + 1);
         }
 
         @Override

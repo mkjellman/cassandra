@@ -336,7 +336,7 @@ public class CompactionController implements AutoCloseable
             reader.getMaxTimestamp() <= minTimestamp ||
             tombstoneOnly && !reader.mayHaveTombstones())
             return null;
-        RowIndexEntry<?> position = reader.getPosition(key, SSTableReader.Operator.EQ);
+        IndexedEntry position = reader.getPosition(key, SSTableReader.Operator.EQ);
         if (position == null)
             return null;
         FileDataInput dfile = openDataFiles.computeIfAbsent(reader, this::openDataFile);

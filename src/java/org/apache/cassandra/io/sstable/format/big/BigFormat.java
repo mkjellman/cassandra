@@ -23,7 +23,7 @@ import java.util.UUID;
 
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.schema.TableMetadataRef;
-import org.apache.cassandra.db.RowIndexEntry;
+import org.apache.cassandra.db.IndexedEntry;
 import org.apache.cassandra.db.SerializationHeader;
 import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
 import org.apache.cassandra.io.sstable.Component;
@@ -73,9 +73,9 @@ public class BigFormat implements SSTableFormat
     }
 
     @Override
-    public RowIndexEntry.IndexSerializer getIndexSerializer(TableMetadata metadata, Version version, SerializationHeader header)
+    public IndexedEntry.Serializer getIndexSerializer(TableMetadata metadataa, Version version, SerializationHeader header)
     {
-        return new RowIndexEntry.Serializer(version, header);
+        return new IndexedEntry.Serializer(version, header);
     }
 
     static class WriterFactory extends SSTableWriter.Factory

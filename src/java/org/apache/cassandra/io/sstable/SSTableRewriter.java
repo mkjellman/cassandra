@@ -27,7 +27,7 @@ import org.apache.cassandra.cache.KeyCacheKey;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.DecoratedKey;
-import org.apache.cassandra.db.RowIndexEntry;
+import org.apache.cassandra.db.IndexedEntry;
 import org.apache.cassandra.db.rows.UnfilteredRowIterator;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.format.SSTableWriter;
@@ -68,7 +68,7 @@ public class SSTableRewriter extends Transactional.AbstractTransactional impleme
     private final boolean keepOriginals; // true if we do not want to obsolete the originals
 
     private SSTableWriter writer;
-    private Map<DecoratedKey, RowIndexEntry> cachedKeys = new HashMap<>();
+    private Map<DecoratedKey, IndexedEntry> cachedKeys = new HashMap<>();
 
     // for testing (TODO: remove when have byteman setup)
     private boolean throwEarly, throwLate;
@@ -127,12 +127,12 @@ public class SSTableRewriter extends Transactional.AbstractTransactional impleme
         return writer;
     }
 
-    public RowIndexEntry append(UnfilteredRowIterator partition)
+    public IndexedEntry append(UnfilteredRowIterator partition)
     {
         // we do this before appending to ensure we can resetAndTruncate() safely if the append fails
         DecoratedKey key = partition.partitionKey();
         maybeReopenEarly(key);
-        RowIndexEntry index = writer.append(partition);
+        IndexedEntry index = writer.append(partition);
         if (!transaction.isOffline() && index != null)
         {
             for (SSTableReader reader : transaction.originals())
@@ -148,7 +148,7 @@ public class SSTableRewriter extends Transactional.AbstractTransactional impleme
     }
 
     // attempts to append the row, if fails resets the writer position
-    public RowIndexEntry tryAppend(UnfilteredRowIterator partition)
+    public IndexedEntry tryAppend(UnfilteredRowIterator partition)
     {
         writer.mark();
         try
@@ -170,8 +170,8 @@ public class SSTableRewriter extends Transactional.AbstractTransactional impleme
             {
                 for (SSTableReader reader : transaction.originals())
                 {
-                    RowIndexEntry index = reader.getPosition(key, SSTableReader.Operator.GE);
-                    NativeLibrary.trySkipCache(reader.getFilename(), 0, index == null ? 0 : index.position);
+                    IndexedEntry index = reader.getPosition(key, SSTableReader.Operator.GE);
+                    NativeLibrary.trySkipCache(reader.getFilename(), 0, index == null ? 0 : index.getPosition());
                 }
             }
             else
@@ -232,7 +232,7 @@ public class SSTableRewriter extends Transactional.AbstractTransactional impleme
         if (!cachedKeys.isEmpty())
         {
             invalidateKeys = new ArrayList<>(cachedKeys.size());
-            for (Map.Entry<DecoratedKey, RowIndexEntry> cacheKey : cachedKeys.entrySet())
+            for (Map.Entry<DecoratedKey, IndexedEntry> cacheKey : cachedKeys.entrySet())
             {
                 invalidateKeys.add(cacheKey.getKey());
                 newReader.cacheKey(cacheKey.getKey(), cacheKey.getValue());

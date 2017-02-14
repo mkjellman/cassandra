@@ -28,7 +28,6 @@ import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.filter.ClusteringIndexFilter;
 import org.apache.cassandra.db.filter.ColumnFilter;
-import org.apache.cassandra.io.sstable.IndexHelper;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.format.SSTableReadsListener;
 import org.apache.cassandra.io.sstable.metadata.StatsMetadata;
@@ -173,15 +172,15 @@ public class UnfilteredRowIteratorWithLowerBound extends LazilyInitializedUnfilt
         if (!canUseMetadataLowerBound())
             maybeInit();
 
-        RowIndexEntry rowIndexEntry = sstable.getCachedPosition(partitionKey(), false);
-        if (rowIndexEntry == null)
+        IndexedEntry indexEntry = sstable.getCachedPosition(partitionKey(), false);
+        if (indexEntry == null)
             return null;
 
-        List<IndexHelper.IndexInfo> columns = rowIndexEntry.columnsIndex();
+        List<IndexInfo> columns = indexEntry.getAllColumnIndexes();
         if (columns.size() == 0)
             return null;
 
-        IndexHelper.IndexInfo column = columns.get(filter.isReversed() ? columns.size() - 1 : 0);
+        IndexInfo column = columns.get(filter.isReversed() ? columns.size() - 1 : 0);
         ClusteringPrefix lowerBoundPrefix = filter.isReversed() ? column.lastName : column.firstName;
         assert lowerBoundPrefix.getRawValues().length <= metadata().comparator.size() :
             String.format("Unexpected number of clustering values %d, expected %d or fewer for %s",

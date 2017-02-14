@@ -21,7 +21,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.UUID;
 
-import org.apache.cassandra.db.RowIndexEntry;
+import org.apache.cassandra.db.IndexedEntry;
 import org.apache.cassandra.db.SerializationHeader;
 import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
 import org.apache.cassandra.db.rows.UnfilteredRowIterator;
@@ -45,7 +45,7 @@ public class SimpleSSTableMultiWriter implements SSTableMultiWriter
 
     public boolean append(UnfilteredRowIterator partition)
     {
-        RowIndexEntry<?> indexEntry = writer.append(partition);
+        IndexedEntry indexEntry = writer.append(partition);
         return indexEntry != null;
     }
 

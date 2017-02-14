@@ -60,7 +60,7 @@ public class BigTableScanner implements ISSTableScanner
 
     private final ColumnFilter columns;
     private final DataRange dataRange;
-    private final RowIndexEntry.IndexSerializer rowIndexEntrySerializer;
+    private final IndexedEntry.Serializer rowIndexEntrySerializer;
     private final SSTableReadsListener listener;
     private long startScan = -1;
     private long bytesScanned = 0;
@@ -190,14 +190,14 @@ public class BigTableScanner implements ISSTableScanner
                 if (indexDecoratedKey.compareTo(currentRange.left) > 0 || currentRange.contains(indexDecoratedKey))
                 {
                     // Found, just read the dataPosition and seek into index and data files
-                    long dataPosition = RowIndexEntry.Serializer.readPosition(ifile, sstable.descriptor.version);
+                    long dataPosition = IndexedEntry.Serializer.readPosition(ifile, sstable.descriptor.version);
                     ifile.seek(indexPosition);
                     dfile.seek(dataPosition);
                     break;
                 }
                 else
                 {
-                    RowIndexEntry.Serializer.skip(ifile, sstable.descriptor.version);
+                    IndexedEntry.Serializer.skip(ifile, sstable.descriptor.version);
                 }
             }
         }
@@ -281,9 +281,9 @@ public class BigTableScanner implements ISSTableScanner
     protected class KeyScanningIterator extends AbstractIterator<UnfilteredRowIterator>
     {
         private DecoratedKey nextKey;
-        private RowIndexEntry nextEntry;
+        private IndexedEntry nextEntry;
         private DecoratedKey currentKey;
-        private RowIndexEntry currentEntry;
+        private IndexedEntry currentEntry;
 
         protected UnfilteredRowIterator computeNext()
         {
@@ -353,7 +353,7 @@ public class BigTableScanner implements ISSTableScanner
                         {
                             if (dataRange == null)
                             {
-                                dfile.seek(currentEntry.position);
+                                dfile.seek(currentEntry.getPosition());
                                 startScan = dfile.getFilePointer();
                                 ByteBufferUtil.skipShortLength(dfile); // key
                                 return SSTableIdentityIterator.create(sstable, dfile, partitionKey());

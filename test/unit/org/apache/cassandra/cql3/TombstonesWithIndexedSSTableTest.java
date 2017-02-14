@@ -24,7 +24,6 @@ import org.junit.Test;
 import org.apache.cassandra.Util;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.marshal.Int32Type;
-import org.apache.cassandra.io.sstable.IndexHelper;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
@@ -76,10 +75,10 @@ public class TombstonesWithIndexedSSTableTest extends CQLTester
             {
                 // The line below failed with key caching off (CASSANDRA-11158)
                 @SuppressWarnings("unchecked")
-                RowIndexEntry<IndexHelper.IndexInfo> indexEntry = sstable.getPosition(dk, SSTableReader.Operator.EQ);
+                IndexedEntry indexEntry = sstable.getPosition(dk, SSTableReader.Operator.EQ);
                 if (indexEntry != null && indexEntry.isIndexed())
                 {
-                    ClusteringPrefix firstName = indexEntry.columnsIndex().get(1).firstName;
+                    ClusteringPrefix firstName = indexEntry.getAllColumnIndexes().get(1).firstName;
                     if (firstName.kind().isBoundary())
                         break deletionLoop;
                     indexedRow = Int32Type.instance.compose(firstName.get(0));

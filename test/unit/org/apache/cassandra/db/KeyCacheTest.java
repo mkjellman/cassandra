@@ -89,7 +89,7 @@ public class KeyCacheTest
         assertKeyCacheSize(100, KEYSPACE1, COLUMN_FAMILY2);
 
         // really? our caches don't implement the map interface? (hence no .addAll)
-        Map<KeyCacheKey, RowIndexEntry> savedMap = new HashMap<KeyCacheKey, RowIndexEntry>();
+        Map<KeyCacheKey, IndexedEntry> savedMap = new HashMap<KeyCacheKey, IndexedEntry>();
         for (Iterator<KeyCacheKey> iter = CacheService.instance.keyCache.keyIterator();
              iter.hasNext();)
         {
@@ -108,12 +108,12 @@ public class KeyCacheTest
         assertKeyCacheSize(savedMap.size(), KEYSPACE1, COLUMN_FAMILY2);
 
         // probably it's better to add equals/hashCode to RowIndexEntry...
-        for (Map.Entry<KeyCacheKey, RowIndexEntry> entry : savedMap.entrySet())
+        for (Map.Entry<KeyCacheKey, IndexedEntry> entry : savedMap.entrySet())
         {
-            RowIndexEntry expected = entry.getValue();
-            RowIndexEntry actual = CacheService.instance.keyCache.get(entry.getKey());
-            assertEquals(expected.position, actual.position);
-            assertEquals(expected.columnsIndex(), actual.columnsIndex());
+            IndexedEntry expected = entry.getValue();
+            IndexedEntry actual = CacheService.instance.keyCache.get(entry.getKey());
+            assertEquals(expected.getPosition(), actual.getPosition());
+            assertEquals(expected.getAllColumnIndexes(), actual.getAllColumnIndexes());
             if (expected.isIndexed())
             {
                 assertEquals(expected.deletionTime(), actual.deletionTime());
