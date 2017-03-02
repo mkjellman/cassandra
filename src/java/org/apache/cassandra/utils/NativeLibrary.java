@@ -230,6 +230,40 @@ public final class NativeLibrary
         }
     }
 
+    public static void tryDisableReadAhead(int fd, long offset, long len)
+    {
+        if (fd < 0)
+            return;
+
+        try
+        {
+            if (osType == LINUX)
+            {
+                int result = wrappedLibrary.callPosixFadvise(fd, offset, len, POSIX_FADV_RANDOM);
+                if (result != 0)
+                    NoSpamLogger.log(
+                    logger,
+                    NoSpamLogger.Level.WARN,
+                    10,
+                    TimeUnit.MINUTES,
+                    "Failed tryDisableReadAhead. Error: " + wrappedLibrary.callStrerror(result).getString(0));
+            }
+        }
+        catch (UnsatisfiedLinkError e)
+        {
+            // if JNA is unavailable just skipping Direct I/O
+            // instance of this class will act like normal RandomAccessFile
+        }
+        catch (RuntimeException e)
+        {
+            if (!(e instanceof LastErrorException))
+                throw e;
+
+            logger.warn("posix_fadvise({}, {}) failed, errno ({}).", fd, offset, errno(e));
+        }
+    }
+
+
     public static void trySkipCache(int fd, long offset, int len, String path)
     {
         if (fd < 0)

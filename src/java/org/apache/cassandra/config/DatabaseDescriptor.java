@@ -2466,6 +2466,11 @@ public class DatabaseDescriptor
 
     public static String getFullQueryLogPath()
     {
-        return  conf.full_query_log_dir;
+        return conf.full_query_log_dir;
+    }
+
+    public static int getSSTableIndexSegmentPaddingLength()
+    {
+        return conf.sstable_index_segment_padding_in_kb;
     }
 }

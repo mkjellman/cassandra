@@ -21,9 +21,15 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.apache.cassandra.io.util.PageAlignedReader;
+import org.apache.cassandra.io.util.DataPosition;
+import org.apache.cassandra.io.util.FileDataInput;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.utils.AbstractIterator;
 import com.google.common.collect.Iterators;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.rows.*;
@@ -50,9 +56,12 @@ import static org.apache.cassandra.dht.AbstractBounds.minRight;
 
 public class BigTableScanner implements ISSTableScanner
 {
+    private static final Logger logger = LoggerFactory.getLogger(BigTableScanner.class);
+
     private final AtomicBoolean isClosed = new AtomicBoolean(false);
     protected final RandomAccessReader dfile;
-    protected final RandomAccessReader ifile;
+    private FileDataInput ifile;
+    //private final FileDataInput ifile;
     public final SSTableReader sstable;
 
     private final Iterator<AbstractBounds<PartitionPosition>> rangeIterator;
@@ -179,10 +188,12 @@ public class BigTableScanner implements ISSTableScanner
     private void seekToCurrentRangeStart()
     {
         long indexPosition = sstable.getIndexScanPosition(currentRange.left);
-        ifile.seek(indexPosition);
         try
         {
+            if (ifile instanceof PageAlignedReader)
+                ((PageAlignedReader) ifile).findAndSetSegmentAndSubSegmentCurrentForPosition(indexPosition);
 
+            ifile.seek(indexPosition);
             while (!ifile.isEOF())
             {
                 indexPosition = ifile.getFilePointer();
@@ -190,7 +201,15 @@ public class BigTableScanner implements ISSTableScanner
                 if (indexDecoratedKey.compareTo(currentRange.left) > 0 || currentRange.contains(indexDecoratedKey))
                 {
                     // Found, just read the dataPosition and seek into index and data files
-                    long dataPosition = IndexedEntry.Serializer.readPosition(ifile, sstable.descriptor.version);
+                    // If the sstable has birch indexes, skip the serialized "is indexed" marker
+                    if (sstable.descriptor.version.hasBirchIndexes())
+                        ifile.readBoolean();
+
+                    long dataPosition = ifile.readLong();
+
+                    if (ifile instanceof PageAlignedReader)
+                        ((PageAlignedReader) ifile).findAndSetSegmentAndSubSegmentCurrentForPosition(indexPosition);
+
                     ifile.seek(indexPosition);
                     dfile.seek(dataPosition);
                     break;
@@ -278,17 +297,70 @@ public class BigTableScanner implements ISSTableScanner
         return new KeyScanningIterator();
     }
 
-    protected class KeyScanningIterator extends AbstractIterator<UnfilteredRowIterator>
+    protected class KeyScanningIterator extends AbstractIterator<UnfilteredRowIterator> implements AutoCloseable
     {
         private DecoratedKey nextKey;
         private IndexedEntry nextEntry;
         private DecoratedKey currentKey;
         private IndexedEntry currentEntry;
+        private long lastDeserialziedPos;
+        private DataPosition lastDeserializedMark;
 
         protected UnfilteredRowIterator computeNext()
         {
             try
             {
+                // there are some cases where the iterator will be advanced more than once,
+                // so we have to do this check to make sure we're "starting" at the same offset
+                // we "last" deserialized for the next iteration.
+                if (lastDeserialziedPos > 0)
+                {
+                    if (ifile instanceof RandomAccessReader)
+                    {
+                        // handle legacy index format
+                        ifile.reset(lastDeserializedMark);
+                    }
+                    else
+                    {
+                        if (((PageAlignedReader) ifile).isPositionInsideCurrentSegment(lastDeserialziedPos))
+                        {
+                            if (((PageAlignedReader) ifile).hasNextSegment())
+                            {
+                                try
+                                {
+                                    ((PageAlignedReader) ifile).nextSegment();
+                                }
+                                catch (Exception e)
+                                {
+                                    Exception closeE = ((PageAlignedReader) ifile).getCloseException();
+                                    if (closeE != null)
+                                    {
+                                        logger.error("Attempted to call nextSegment() on a closed PageAlignedReader. Originally closed " +
+                                                     "by the following stack trace", closeE);
+                                    }
+                                    else
+                                    {
+                                        logger.error("Attempted to call nextSegment() on a closed PageAlignedReader but the closeException " +
+                                                     "was null");
+                                    }
+                                    throw e;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            /*
+                            if (((PageAlignedReader) ifile).isClosed())
+                            {
+                                logger.error("ifile we're working on in BigTableScanner iterator is closed!", ((PageAlignedReader) ifile).getCloseException());
+                                //ifile = sstable.openIndexReader();
+                            }
+                            ifile.reset(lastDeserializedMark);
+                            */
+                        }
+                    }
+                }
+
                 if (nextEntry == null)
                 {
                     do
@@ -298,17 +370,30 @@ public class BigTableScanner implements ISSTableScanner
 
                         // we're starting the first range or we just passed the end of the previous range
                         if (!rangeIterator.hasNext())
+                        {
+                            maybeCloseCurrentIndexEntry();
+                            maybeCloseNextIndexEntry();
+
                             return endOfData();
+                        }
 
                         currentRange = rangeIterator.next();
                         seekToCurrentRangeStart();
                         startScan = dfile.getFilePointer();
 
                         if (ifile.isEOF())
+                        {
+                            maybeCloseCurrentIndexEntry();
+                            maybeCloseNextIndexEntry();
+
                             return endOfData();
+                        }
 
                         currentKey = sstable.decorateKey(ByteBufferUtil.readWithShortLength(ifile));
                         currentEntry = rowIndexEntrySerializer.deserialize(ifile);
+
+                        lastDeserialziedPos = (ifile instanceof RandomAccessReader) ? ifile.getFilePointer() : ((PageAlignedReader)ifile).getOffset();
+                        lastDeserializedMark = ifile.mark();
                     } while (!currentRange.contains(currentKey));
                 }
                 else
@@ -320,16 +405,33 @@ public class BigTableScanner implements ISSTableScanner
 
                 if (ifile.isEOF())
                 {
+                    maybeCloseNextIndexEntry();
+
                     nextEntry = null;
                     nextKey = null;
                 }
                 else
                 {
-                    // we need the position of the start of the next key, regardless of whether it falls in the current range
-                    nextKey = sstable.decorateKey(ByteBufferUtil.readWithShortLength(ifile));
-                    nextEntry = rowIndexEntrySerializer.deserialize(ifile);
+                    if (ifile instanceof PageAlignedReader && ifile.isCurrentSegmentExausted())
+                        ((PageAlignedReader)ifile).nextSegment();
 
-                    if (!currentRange.contains(nextKey))
+                    // todo: kj... i'm using isCurrentSubSegmentPageAligned as a way to differ between
+                    // a birch segment and a normal index.. this is pretty lame.. can i do better?
+                    if (ifile instanceof PageAlignedReader && ((PageAlignedReader)ifile).isCurrentSubSegmentPageAligned())
+                    {
+                        lastDeserialziedPos = ((PageAlignedReader)ifile).getOffset();
+                        lastDeserializedMark = ifile.mark();
+                    }
+                    else
+                    {
+                        // we need the position of the start of the next key, regardless of whether it falls in the current range
+                        nextKey = sstable.decorateKey(ByteBufferUtil.readWithShortLength(ifile));
+                        nextEntry = rowIndexEntrySerializer.deserialize(ifile);
+                        lastDeserialziedPos = (ifile instanceof PageAlignedReader) ? ((PageAlignedReader)ifile).getOffset() : ifile.getFilePointer();
+                        lastDeserializedMark = ifile.mark();
+                    }
+
+                    if (nextKey != null && !currentRange.contains(nextKey))
                     {
                         nextKey = null;
                         nextEntry = null;
@@ -364,6 +466,7 @@ public class BigTableScanner implements ISSTableScanner
                             }
 
                             ClusteringIndexFilter filter = dataRange.clusteringIndexFilter(partitionKey());
+                            currentEntry.setReversed(filter.isReversed()); // todo kjkj IndexQueryPagingTest good repro if we comment this back out
                             return sstable.iterator(dfile, partitionKey(), currentEntry, filter.getSlices(BigTableScanner.this.metadata()), columns, filter.isReversed());
                         }
                         catch (CorruptSSTableException | IOException e)
@@ -379,6 +482,25 @@ public class BigTableScanner implements ISSTableScanner
                 sstable.markSuspect();
                 throw new CorruptSSTableException(e, sstable.getFilename());
             }
+        }
+
+        private void maybeCloseCurrentIndexEntry()
+        {
+            //if (currentEntry != null)
+              //  currentEntry.close();
+        }
+
+        private void maybeCloseNextIndexEntry()
+        {
+            //if (nextEntry != null)
+            //    nextEntry.close();
+        }
+
+        @Override
+        public void close()
+        {
+            maybeCloseCurrentIndexEntry();
+            maybeCloseNextIndexEntry();
         }
     }
 

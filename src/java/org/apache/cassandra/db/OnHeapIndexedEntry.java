@@ -18,27 +18,25 @@
 
 package org.apache.cassandra.db;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 
 import com.google.common.primitives.Ints;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.io.util.FileDataInput;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.utils.ObjectSizes;
 
 /**
- * Created by mkjellman on 1/12/17.
+ * IndexedEntry implementation of On-Heap IndexInfo (non B+(ish) Tree based).
+ * At a high level IndexInfo objects are serialized and deserialized into a List
+ * and then binary searched over to find the offset+width for a given indexed key.
  */
 public class OnHeapIndexedEntry implements IndexedEntry
 {
-    private static final Logger logger = LoggerFactory.getLogger(OnHeapIndexedEntry.class);
-
     private static final long BASE_SIZE =
     ObjectSizes.measure(new OnHeapIndexedEntry(0, DeletionTime.LIVE, 0, Arrays.<IndexInfo>asList(null, null), null))
     + ObjectSizes.measure(new ArrayList<>(1));
@@ -49,8 +47,8 @@ public class OnHeapIndexedEntry implements IndexedEntry
     private final DeletionTime deletionTime;
     private final FileDataInput reader;
 
-    private int nextIndexIdx = -1;
     private int lastDeserializedBlock = -1;
+    private int lastBlockToIterateTo = -1;
     private boolean iteratorDirectionReversed = false;
 
     public OnHeapIndexedEntry(long position, DeletionTime deletionTime, long headerLength, List<IndexInfo> columnsIndex, FileDataInput reader)
@@ -63,6 +61,7 @@ public class OnHeapIndexedEntry implements IndexedEntry
         this.headerLength = headerLength;
         this.columnsIndex = columnsIndex;
         this.reader = reader;
+        this.lastBlockToIterateTo = columnsIndex.size();
     }
 
     public long getPosition()
@@ -95,59 +94,46 @@ public class OnHeapIndexedEntry implements IndexedEntry
         return columnsIndex.size();
     }
 
-    public IndexInfo getIndexInfo(ClusteringPrefix name, ClusteringComparator comparator, boolean reversed)
+    public IndexInfo getIndexInfo(ClusteringPrefix name, ClusteringComparator comparator, boolean reversed) throws IOException
     {
-        iteratorDirectionReversed = reversed;
-        nextIndexIdx = indexFor(name, comparator);
-
-        if (nextIndexIdx < 0 || nextIndexIdx >= columnsIndex.size())
+        int indexIdx = indexFor(name, comparator);
+        if (indexIdx < 0 || indexIdx >= columnsIndex.size())
         {
             // no index block for that slice
             return null; //todo: returning null is lame
         }
 
-        return columnsIndex.get(nextIndexIdx);
+        return columnsIndex.get(indexIdx);
     }
 
     private int getNextIndexIdxIfIterated()
     {
-        int calculatedNextIndexIdx = nextIndexIdx;
-        if (lastDeserializedBlock == calculatedNextIndexIdx)
-        {
-            logger.info("getNextIndexIdxIfIterated lastDeserializedBlock: {} calculatedNextIndexIdx: {}", lastDeserializedBlock, calculatedNextIndexIdx);
-            if (iteratorDirectionReversed)
-                calculatedNextIndexIdx--;
-            else
-                calculatedNextIndexIdx++;
-        }
+        int calculatedNextIndexIdx = lastDeserializedBlock;
 
+        if (iteratorDirectionReversed)
+            calculatedNextIndexIdx--;
+        else
+            calculatedNextIndexIdx++;
         return calculatedNextIndexIdx;
     }
 
     public boolean hasNext()
     {
+
         int calculatedNextIndexIdx = getNextIndexIdxIfIterated();
-        logger.info("do we have next? {} => in hasNext nextIndexIdx: {} columnsIndex.size(): {}", (calculatedNextIndexIdx >= 0 && calculatedNextIndexIdx < columnsIndex.size()) ? "YES" : "NO", calculatedNextIndexIdx, columnsIndex.size());
-        return iteratorDirectionReversed ? calculatedNextIndexIdx >= 0 : calculatedNextIndexIdx <= columnsIndex.size();
+        return iteratorDirectionReversed ? calculatedNextIndexIdx > lastBlockToIterateTo
+                                         : calculatedNextIndexIdx < lastBlockToIterateTo;
     }
 
     public IndexInfo next()
     {
-        if (lastDeserializedBlock == nextIndexIdx)
-        {
-            logger.info("yes, lastDeserializedBlock {} == nextIndexIdx {}", lastDeserializedBlock, nextIndexIdx);
-            if (iteratorDirectionReversed)
-                nextIndexIdx--;
-            else
-            nextIndexIdx++;
-        }
+        int nextIdx = getNextIndexIdxIfIterated();
+        isIdxWithinValidBounds(nextIdx);
 
-        logger.info("next() called => updating lastDeserializedBlock from {} to {}.... reversed? {}", lastDeserializedBlock, nextIndexIdx, iteratorDirectionReversed);
-        lastDeserializedBlock = nextIndexIdx;
         if (iteratorDirectionReversed)
-            nextIndexIdx--;
+            lastDeserializedBlock--;
         else
-            nextIndexIdx++;
+            lastDeserializedBlock++;
 
         return (lastDeserializedBlock < columnsIndex.size() && lastDeserializedBlock >= 0) ? columnsIndex.get(lastDeserializedBlock) : null;
     }
@@ -155,18 +141,65 @@ public class OnHeapIndexedEntry implements IndexedEntry
     public IndexInfo peek()
     {
         int calculatedNextIndexIdx = getNextIndexIdxIfIterated();
-        logger.info("calculatedNextIndexIdx: {}", calculatedNextIndexIdx);
         if (iteratorDirectionReversed)
-            return (calculatedNextIndexIdx >= 0) ? columnsIndex.get(calculatedNextIndexIdx) : null;
+            return (calculatedNextIndexIdx < columnsIndex.size() && calculatedNextIndexIdx >= 0) ? columnsIndex.get(calculatedNextIndexIdx) : null;
         else
             return (calculatedNextIndexIdx < columnsIndex.size()) ? columnsIndex.get(calculatedNextIndexIdx) : null;
     }
 
-    public void startIteratorAt(ClusteringPrefix name, ClusteringComparator comparator, boolean reversed)
+    /**
+     * Single place to check if a given idx is actually "valid"
+     * given the number of elements backing the columnsIndex array.
+     * @param idx index for a given column index element to validate
+     */
+    private void isIdxWithinValidBounds(int idx)
     {
-        lastDeserializedBlock = -1;
+        // we want to use columnsIndex.size() here and not lastBlockToIterateTo as most likely
+        // we're checking this condition when we are in the process of trying to set lastBlockToIterateTo
+        // in the first place
+        assert idx >= -1 && idx <= columnsIndex.size() : String.format("idx: %d not within valid bounds " +
+                                                                       "%d <--> %d", idx, -1, columnsIndex.size());
+    }
+
+    public void setIteratorBounds(ClusteringBound start, ClusteringBound end, ClusteringComparator comparator, boolean reversed) throws IOException
+    {
         iteratorDirectionReversed = reversed;
-        nextIndexIdx = indexFor(name, comparator);
+
+        int nextStartIdx;
+        if (start == ClusteringBound.BOTTOM)
+        {
+            nextStartIdx = -1;
+        }
+        else if (start == ClusteringBound.TOP)
+        {
+            nextStartIdx = entryCount();
+        }
+        else
+        {
+            nextStartIdx = indexFor(start, comparator);
+            nextStartIdx = (reversed) ? nextStartIdx + 1 : nextStartIdx - 1;
+        }
+
+        isIdxWithinValidBounds(nextStartIdx);
+        lastDeserializedBlock = nextStartIdx;
+
+        int lastBlockIdx;
+        if (end == ClusteringBound.BOTTOM)
+        {
+            lastBlockIdx = -1;
+        }
+        else if (end == ClusteringBound.TOP)
+        {
+            lastBlockIdx = entryCount();
+        }
+        else
+        {
+            lastBlockIdx = indexFor(end, comparator);
+            if (lastBlockIdx >= 0 && lastBlockIdx < entryCount())
+                lastBlockIdx = (reversed) ? lastBlockIdx - 1 : lastBlockIdx + 1;
+        }
+        isIdxWithinValidBounds(lastBlockIdx);
+        lastBlockToIterateTo = lastBlockIdx;
     }
 
     public void close()
@@ -177,14 +210,23 @@ public class OnHeapIndexedEntry implements IndexedEntry
 
     public void reset(boolean reversed)
     {
-        iteratorDirectionReversed = reversed;
-        lastDeserializedBlock = -1;
-        nextIndexIdx = -1;
+        this.iteratorDirectionReversed = reversed;
+        this.lastBlockToIterateTo = reversed ? -1 : columnsIndex.size();
+        this.lastDeserializedBlock = reversed ? columnsIndex.size() : -1;
     }
 
     public boolean isReversed()
     {
         return iteratorDirectionReversed;
+    }
+
+    public void setReversed(boolean reversed)
+    {
+        // todo: kjellman -- i'm torn behind having this literally set the reversed boolean
+        // or call reset (which will set it too) -- given how complicated the state logic is
+        // i feel like any time the iterator direction is changed we should always just go to
+        // the defaults (at minimum) for start and end offsets
+        reset(reversed);
     }
 
     public int promotedSize(IndexInfo.Serializer idxSerializer)
@@ -213,25 +255,15 @@ public class OnHeapIndexedEntry implements IndexedEntry
                + ObjectSizes.sizeOfReferenceArray(columnsIndex.size());
     }
 
-    /**
-     * The index of the IndexInfo in which a scan starting with @name should begin.
-     *
-     * @param name name to search for
-     * @param comparator the comparator to use
-     *
-     * @return int index
-     */
-    private int indexFor(ClusteringPrefix name, ClusteringComparator comparator)
+    private int indexFor(ClusteringPrefix name, ClusteringComparator comparator) throws IOException
     {
-        logger.info("kj123 lastDeserializedBlock: {} nextIndexIdx: {} columnsIndex.size(): {} reversed? {}", lastDeserializedBlock, nextIndexIdx, columnsIndex.size(), iteratorDirectionReversed);
-
         IndexInfo target = new IndexInfo(name, name, 0, 0, null);
         /*
         Take the example from the unit test, and say your index looks like this:
         [0..5][10..15][20..25]
         and you look for the slice [13..17].
 
-        When doing forward slice, we we doing a binary search comparing 13 (the start of the query)
+        When doing forward slice, we are doing a binary search comparing 13 (the start of the query)
         to the lastName part of the index slot. You'll end up with the "first" slot, going from left to right,
         that may contain the start.
 
@@ -240,23 +272,42 @@ public class OnHeapIndexedEntry implements IndexedEntry
         first slot where firstName > start ([20..25] here), so we subtract an extra one to get the slot just before.
         */
         int startIdx = 0;
-        List<IndexInfo> toSearch = columnsIndex;
-        if (iteratorDirectionReversed && lastDeserializedBlock >= 0)
+        int endIdx = entryCount() - 1;
+
+        if (iteratorDirectionReversed)
         {
-            toSearch = columnsIndex.subList(0, lastDeserializedBlock + 1);
+            if (lastBlockToIterateTo < endIdx)
+            {
+                endIdx = lastBlockToIterateTo;
+            }
         }
-        else if (!iteratorDirectionReversed && lastDeserializedBlock > 0)
+        else
         {
-            // in the paging case we could have [0-100][101-200][201-300][401-500] with a paging size of 100.
-            // If the IndexInfo covering the [101-200] range actually also covers data for some of the [201-300]
-            // range, then the next page request also needs to consider the previous IndexInfo; otherwise
-            // we'd incorrectly filter out the last returned index.
-            startIdx = lastDeserializedBlock - 1;
-            toSearch = columnsIndex.subList(lastDeserializedBlock - 1, columnsIndex.size());
+            if (lastDeserializedBlock > 0)
+            {
+                startIdx = lastDeserializedBlock;
+            }
         }
 
-        int index = Collections.binarySearch(toSearch, target, comparator.indexComparator(iteratorDirectionReversed));
-        logger.info("binary search returned {} => startIdx: {}, reversed: {} toSearch.size: {} columnsIndex.size: {}", index, startIdx, iteratorDirectionReversed, toSearch.size(), columnsIndex.size());
-        return startIdx + (index < 0 ? -index - (iteratorDirectionReversed ? 2 : 1) : index);
+        int index = binarySearch(target, comparator.indexComparator(iteratorDirectionReversed), startIdx, endIdx);
+        return (index < 0 ? -index - (iteratorDirectionReversed ? 2 : 1) : index);
+    }
+
+    private int binarySearch(IndexInfo key, Comparator<IndexInfo> c, int low, int high)
+    {
+        while (low <= high)
+        {
+            int mid = (low + high) >>> 1;
+            IndexInfo midVal = columnsIndex.get(mid);
+            int cmp = c.compare(midVal, key);
+
+            if (cmp < 0)
+                low = mid + 1;
+            else if (cmp > 0)
+                high = mid - 1;
+            else
+                return mid;
+        }
+        return -(low + 1);
     }
 }

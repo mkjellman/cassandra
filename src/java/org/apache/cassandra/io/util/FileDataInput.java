@@ -26,6 +26,8 @@ public interface FileDataInput extends RewindableDataInput, Closeable
 
     boolean isEOF() throws IOException;
 
+    boolean isCurrentSegmentExausted() throws IOException;
+
     long bytesRemaining() throws IOException;
 
     void seek(long pos) throws IOException;

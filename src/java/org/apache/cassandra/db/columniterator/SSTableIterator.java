@@ -205,14 +205,20 @@ public class SSTableIterator extends AbstractSSTableIterator
     private class ForwardIndexedReader extends ForwardReader
     {
         private final IndexState indexState;
-
-        private int lastBlockIdx; // the last index block that has data for the current query
+        private final IndexedEntry indexedEntry;
 
         private ForwardIndexedReader(IndexedEntry indexEntry, FileDataInput file, boolean shouldCloseFile)
         {
             super(file, shouldCloseFile);
             this.indexState = new IndexState(this, metadata.comparator, indexEntry, false);
-            this.lastBlockIdx = indexState.blocksCount(); // if we never call setForSlice, that's where we want to stop
+            this.indexedEntry = indexEntry;
+        }
+
+        @Override
+        public void close() throws IOException
+        {
+            super.close();
+            this.indexState.close();
         }
 
         @Override
@@ -221,39 +227,21 @@ public class SSTableIterator extends AbstractSSTableIterator
             super.setForSlice(slice);
 
             // if our previous slicing already got us the biggest row in the sstable, we're done
-            if (indexState.isDone())
+            if (!indexedEntry.hasNext() && openMarker != null)
             {
                 sliceDone = true;
                 return;
             }
 
-            // Find the first index block we'll need to read for the slice.
-            int startIdx = indexState.findBlockIndex(slice.start(), indexState.currentBlockIdx());
-            if (startIdx >= indexState.blocksCount())
+            // Find and set the iterator to start and finish for the blocks involved to be read the slice.
+            indexedEntry.setIteratorBounds(slice.start(), slice.end(), metadata.comparator, false);
+            if (!indexedEntry.hasNext())
             {
                 sliceDone = true;
                 return;
             }
 
-            // Find the last index block we'll need to read for the slice.
-            lastBlockIdx = indexState.findBlockIndex(slice.end(), startIdx);
-
-            // If the slice end is before the very first block, we have nothing for that slice
-            if (lastBlockIdx < 0)
-            {
-                assert startIdx < 0;
-                sliceDone = true;
-                return;
-            }
-
-            // If we start before the very first block, just read from the first one.
-            if (startIdx < 0)
-                startIdx = 0;
-
-            // If that's the last block we were reading, we're already where we want to be. Otherwise,
-            // seek to that first block
-            if (startIdx != indexState.currentBlockIdx())
-                indexState.setToBlock(startIdx);
+            indexState.updateStateForStartingBlock(true);
 
             // The index search is based on the last name of the index blocks, so at that point we have that:
             //   1) indexes[currentIdx - 1].lastName < slice.start <= indexes[currentIdx].lastName
@@ -262,8 +250,8 @@ public class SSTableIterator extends AbstractSSTableIterator
             // whole slice is between the previous block end and this block start, and thus has no corresponding
             // data. One exception is if the previous block ends with an openMarker as it will cover our slice
             // and we need to return it.
-            if (indexState.currentBlockIdx() == lastBlockIdx
-                && metadata().comparator.compare(slice.end(), indexState.currentIndex().firstName) < 0
+            if (!indexedEntry.hasNext()
+                && metadata().comparator.compare(slice.end(), indexState.currentIndex().getFirstName()) < 0
                 && openMarker == null)
             {
                 sliceDone = true;
@@ -282,12 +270,11 @@ public class SSTableIterator extends AbstractSSTableIterator
                 // Return the next unfiltered unless we've reached the end, or we're beyond our slice
                 // end (note that unless we're on the last block for the slice, there is no point
                 // in checking the slice end).
-                if (indexState.isDone()
-                    || indexState.currentBlockIdx() > lastBlockIdx
-                    || !deserializer.hasNext()
-                    || (indexState.currentBlockIdx() == lastBlockIdx && deserializer.compareNextTo(end) >= 0))
+                if ((!indexedEntry.hasNext() && !deserializer.hasNext())
+                    || deserializer.compareNextTo(end) >= 0)
+                {
                     return null;
-
+                }
 
                 Unfiltered next = deserializer.readNext();
                 // We may get empty row for the same reason expressed on UnfilteredSerializer.deserializeOne.

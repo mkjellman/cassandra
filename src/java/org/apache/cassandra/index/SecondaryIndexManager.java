@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.index;
 
+import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.util.*;
 import java.util.concurrent.*;
@@ -825,7 +826,7 @@ public class SecondaryIndexManager implements IndexRegistry, INotificationConsum
     /**
      * When building an index against existing data in sstables, add the given partition to the index
      */
-    public void indexPartition(DecoratedKey key, Set<Index> indexes, int pageSize)
+    public void indexPartition(DecoratedKey key, Set<Index> indexes, int pageSize) throws IOException
     {
         if (logger.isTraceEnabled())
             logger.trace("Indexing partition {}", baseCfs.metadata().partitionKeyType.getString(key.getKey()));

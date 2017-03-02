@@ -20,6 +20,9 @@ package org.apache.cassandra.db.columniterator;
 import java.io.IOException;
 import java.util.*;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.filter.ColumnFilter;
 import org.apache.cassandra.db.partitions.ImmutableBTreePartition;
@@ -35,6 +38,8 @@ import org.apache.cassandra.utils.btree.BTree;
  */
 public class SSTableReversedIterator extends AbstractSSTableIterator
 {
+    private static final Logger logger = LoggerFactory.getLogger(SSTableReversedIterator.class);
+
     /**
      * The index of the slice being processed.
      */
@@ -175,6 +180,8 @@ public class SSTableReversedIterator extends AbstractSSTableIterator
                                     boolean hasPreviousBlock,
                                     boolean hasNextBlock) throws IOException
         {
+            logger.info("SSTableReversedIterator#loadFromDisk start null? {} end null? {} hasPreviousBlock? {} hasNextBlock? {} openMarker null? {}", start == null, end == null, hasPreviousBlock, hasNextBlock, openMarker == null);
+            
             // start != null means it's the block covering the beginning of the slice, so it has to be the last block for this slice.
             assert start == null || !hasNextBlock;
 
@@ -207,6 +214,9 @@ public class SSTableReversedIterator extends AbstractSSTableIterator
                 // want to "return" it just yet, we'll wait until we reach it in the next blocks. That's why we trigger
                 // skipLastIteratedItem in that case (this is first item of the block, but we're iterating in reverse order
                 // so it will be last returned by the iterator).
+
+                logger.info("openMarker [1/2] != null...");
+
                 ClusteringBound markerStart = start == null ? ClusteringBound.BOTTOM : start;
                 buffer.add(new RangeTombstoneBoundMarker(markerStart, openMarker));
                 if (hasNextBlock)
@@ -240,6 +250,9 @@ public class SSTableReversedIterator extends AbstractSSTableIterator
                 // not breaking ImmutableBTreePartition, we should skip it when returning from the iterator, hence the
                 // skipFirstIteratedItem (this is the last item of the block, but we're iterating in reverse order so it will
                 // be the first returned by the iterator).
+
+                logger.info("openMarker [2/2] != null...");
+
                 ClusteringBound markerEnd = end == null ? ClusteringBound.TOP : end;
                 buffer.add(new RangeTombstoneBoundMarker(markerEnd, openMarker));
                 if (hasPreviousBlock)
@@ -256,19 +269,20 @@ public class SSTableReversedIterator extends AbstractSSTableIterator
 
         // The slice we're currently iterating over
         private Slice slice;
-        // The last index block to consider for the slice
-        private int lastBlockIdx;
+        private final IndexedEntry indexedEntry;
 
         private ReverseIndexedReader(IndexedEntry indexEntry, FileDataInput file, boolean shouldCloseFile)
         {
             super(file, shouldCloseFile);
             this.indexState = new IndexState(this, metadata.comparator, indexEntry, true);
+            this.indexedEntry = indexEntry;
         }
 
         @Override
         public void close() throws IOException
         {
             super.close();
+            this.indexState.close();
         }
 
         @Override
@@ -277,41 +291,30 @@ public class SSTableReversedIterator extends AbstractSSTableIterator
             this.slice = slice;
 
             // if our previous slicing already got us past the beginning of the sstable, we're done
-            if (indexState.isDone())
+            if (!indexedEntry.hasNext())
             {
                 iterator = Collections.emptyIterator();
                 return;
             }
 
             // Find the first index block we'll need to read for the slice.
-            int startIdx = indexState.findBlockIndex(slice.end(), indexState.currentBlockIdx());
-            if (startIdx < 0)
+            //indexedEntry.setIteratorBounds(null, slice.start(), metadata.comparator, true);
+            indexedEntry.setIteratorBounds(slice.end(), slice.start(), metadata.comparator, true);
+            //indexedEntry.setIteratorBounds(slice.start(), slice.end(), metadata.comparator, true);
+            if (!indexedEntry.hasNext())
             {
                 iterator = Collections.emptyIterator();
                 return;
             }
-
-            lastBlockIdx = indexState.findBlockIndex(slice.start(), startIdx);
-
-            // If the last block to look (in reverse order) is after the very last block, we have nothing for that slice
-            if (lastBlockIdx >= indexState.blocksCount())
-            {
-                assert startIdx >= indexState.blocksCount();
-                iterator = Collections.emptyIterator();
-                return;
-            }
-
-            // If we start (in reverse order) after the very last block, just read from the last one.
-            if (startIdx >= indexState.blocksCount())
-                startIdx = indexState.blocksCount() - 1;
 
             // Note that even if we were already set on the proper block (which would happen if the previous slice
             // requested ended on the same block this one start), we can't reuse it because when reading the previous
             // slice we've only read that block from the previous slice start. Re-reading also handles
             // skipFirstIteratedItem/skipLastIteratedItem that we would need to handle otherwise.
-            indexState.setToBlock(startIdx);
+            //indexState.setToBlock(startIdx); //todo kj: need to handle this logic added for CASSANDRA-13340
 
-            readCurrentBlock(false, startIdx != lastBlockIdx);
+            indexState.updateStateForStartingBlock(true);
+            readCurrentBlock(false, indexedEntry.hasNext());
         }
 
         @Override
@@ -320,14 +323,19 @@ public class SSTableReversedIterator extends AbstractSSTableIterator
             if (super.hasNextInternal())
                 return true;
 
-            // We have nothing more for our current block, move the next one (so the one before on disk).
-            int nextBlockIdx = indexState.currentBlockIdx() - 1;
-            if (nextBlockIdx < 0 || nextBlockIdx < lastBlockIdx)
+            if (!indexedEntry.hasNext())
+            {
                 return false;
+            }
 
+            // todo kj: this was changed for CASSANDRA-13340, need to see impact to my changes
             // The slice start can be in
-            indexState.setToBlock(nextBlockIdx);
-            readCurrentBlock(true, nextBlockIdx != lastBlockIdx);
+            //indexState.setToBlock(nextBlockIdx);
+            //readCurrentBlock(true, nextBlockIdx != lastBlockIdx);
+
+            indexState.updateStateForStartingBlock(false);
+            readCurrentBlock(true, indexedEntry.hasNext());
+
             // since that new block is within the bounds we've computed in setToSlice(), we know there will
             // always be something matching the slice unless we're on the lastBlockIdx (in which case there
             // may or may not be results, but if there isn't, we're done for the slice).
@@ -345,10 +353,12 @@ public class SSTableReversedIterator extends AbstractSSTableIterator
             if (buffer == null)
                 buffer = createBuffer(indexState.blocksCount());
 
+            // todo kj: this was changed for CASSANDRA-13340, need to see impact to my changes
             // The slice start (resp. slice end) is only meaningful on the last (resp. first) block read (since again,
             // we read blocks in reverse order).
             boolean canIncludeSliceStart = !hasNextBlock;
             boolean canIncludeSliceEnd = !hasPreviousBlock;
+            logger.info("readCurrentBlock: canIncludeSliceStart: {} hasNextBlock: {} canIncludeSliceEnd: {} hasPreviousBlock: {} slice.start() == null? {}", canIncludeSliceStart, hasNextBlock, canIncludeSliceEnd, hasPreviousBlock, slice.start() == null);
 
             loadFromDisk(canIncludeSliceStart ? slice.start() : null,
                          canIncludeSliceEnd ? slice.end() : null,
@@ -400,6 +410,8 @@ public class SSTableReversedIterator extends AbstractSSTableIterator
             built = null;
             rowBuilder = BTree.builder(metadata.comparator);
             deletionBuilder = MutableDeletionInfo.builder(partitionLevelDeletion, metadata().comparator, false);
+            //deletionBuilder = MutableDeletionInfo.builder(partitionLevelDeletion, metadata().comparator, true);
+            // kjellman we really need to fix this it's so lame that false on a reversed iterator leads to the correct behavior
         }
 
         public void build()

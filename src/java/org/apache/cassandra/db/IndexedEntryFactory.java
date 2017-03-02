@@ -34,6 +34,6 @@ public class IndexedEntryFactory
         if (index.columnsIndex.size() > 1)
             return new OnHeapIndexedEntry(position, deletionTime, index.partitionHeaderLength, index.columnsIndex, null);
         else
-            return new NonIndexedRowEntry(position, null);
+            return new NonIndexedRowEntry(position, index.partitionHeaderLength, null);
     }
 }

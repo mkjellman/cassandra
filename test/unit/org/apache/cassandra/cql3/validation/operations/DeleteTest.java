@@ -23,8 +23,6 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
-import org.apache.commons.lang3.StringUtils;
-
 import org.junit.Test;
 
 import org.apache.cassandra.cql3.CQLTester;
@@ -33,7 +31,6 @@ import org.apache.cassandra.db.Keyspace;
 
 import static org.apache.cassandra.utils.ByteBufferUtil.EMPTY_BYTE_BUFFER;
 import static org.apache.cassandra.utils.ByteBufferUtil.bytes;
-import static org.apache.commons.lang3.StringUtils.isEmpty;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
@@ -1376,10 +1373,32 @@ public class DeleteTest extends CQLTester
             sb.append('a');
         String longText = sb.toString();
 
-        for (int i = 0; i < 10; i++)
+        for (int i = 0; i < 10; i++) //3
             execute("INSERT INTO %s(k, i, v) VALUES (?, ?, ?) USING TIMESTAMP 3", "a", i*2, longText);
 
-        execute("DELETE FROM %s USING TIMESTAMP 1 WHERE k = ? AND i >= ? AND i <= ?", "a", 12, 16);
+        execute("DELETE FROM %s USING TIMESTAMP 1590751472 WHERE k = ? AND i >= ? AND i <= ?", "a", 14, 16);
+        execute("DELETE FROM %s USING TIMESTAMP 4 WHERE k = ? AND i >= ? AND i <= ?", "a", 16, 17);
+        //execute("DELETE FROM %s USING TIMESTAMP 1 WHERE k = ? AND i >= ? AND i <= ?", "a", 12, 16);
+
+
+        // insert mutation at ts n
+        // insert range deletion at ts n+1
+        // that should cause range specified on read to be excluded
+
+        // insert mutation at ts n-1
+        // insert range deletion at ts n
+        // that should cause range specified on read to be excluded
+
+        // insert mutation at ts n+1
+        // insert range deletion at ts n
+        // that should cause range specified on read to be included
+
+        // insert mutation at ts 0
+        // insert range deletion at ts 1
+        // that should cause range specified on read to be excluded
+
+        // ====
+        // range tombstone needs to cover an index boundry... currently all tests are within a single index block
 
         flush();
 
@@ -1387,6 +1406,7 @@ public class DeleteTest extends CQLTester
         execute("INSERT INTO %s(k, i, v) VALUES (?, ?, ?) USING TIMESTAMP 3", "a", 11, longText);
         execute("INSERT INTO %s(k, i, v) VALUES (?, ?, ?) USING TIMESTAMP 0", "a", 15, longText);
         execute("INSERT INTO %s(k, i, v) VALUES (?, ?, ?) USING TIMESTAMP 0", "a", 17, longText);
+        //execute("INSERT INTO %s(k, i, v) VALUES (?, ?, ?) USING TIMESTAMP 4", "a", 17, longText);
 
         flush();
 

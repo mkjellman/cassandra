@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.io.sstable;
 
+import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.util.*;
 
@@ -53,7 +54,7 @@ import org.apache.cassandra.utils.concurrent.Transactional;
 public class SSTableRewriter extends Transactional.AbstractTransactional implements Transactional
 {
     @VisibleForTesting
-    public static boolean disableEarlyOpeningForTests = false;
+    public static boolean disableEarlyOpeningForTests = true;
 
     private final long preemptiveOpenInterval;
     private final long maxAge;
@@ -148,7 +149,7 @@ public class SSTableRewriter extends Transactional.AbstractTransactional impleme
     }
 
     // attempts to append the row, if fails resets the writer position
-    public IndexedEntry tryAppend(UnfilteredRowIterator partition)
+    public IndexedEntry tryAppend(UnfilteredRowIterator partition) throws IOException
     {
         writer.mark();
         try

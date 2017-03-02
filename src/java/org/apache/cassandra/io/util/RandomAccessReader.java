@@ -139,6 +139,11 @@ public class RandomAccessReader extends RebufferingInputStream implements FileDa
         return current() == length();
     }
 
+    public boolean isCurrentSegmentExausted() throws IOException
+    {
+        return isEOF();
+    }
+
     public long bytesRemaining()
     {
         return length() - getFilePointer();

@@ -20,6 +20,8 @@
  */
 package org.apache.cassandra.db.transform;
 
+import java.io.IOException;
+
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.DeletionTime;
 import org.apache.cassandra.db.RegularAndStaticColumns;

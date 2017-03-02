@@ -411,7 +411,14 @@ public class Mutation implements IMutation
         {
             int size = TypeSizes.sizeofUnsignedVInt(mutation.modifications.size());
             for (Map.Entry<TableId, PartitionUpdate> entry : mutation.modifications.entrySet())
-                size += PartitionUpdate.serializer.serializedSize(entry.getValue(), version);
+                try
+                {
+                    size += PartitionUpdate.serializer.serializedSize(entry.getValue(), version);
+                }
+                catch (IOException e)
+                {
+                    throw new RuntimeException(e);
+                }
 
             return size;
         }

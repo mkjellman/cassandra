@@ -19,10 +19,13 @@
 package org.apache.cassandra.db;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.List;
 
 import org.apache.cassandra.db.marshal.AbstractType;
-import org.apache.cassandra.io.ISerializer;
+import org.apache.cassandra.io.sstable.birch.IndexInfoSerializer;
+import org.apache.cassandra.io.sstable.birch.PageAlignedWriter;
+import org.apache.cassandra.io.sstable.birch.TreeSerializable;
 import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
@@ -31,18 +34,21 @@ import org.apache.cassandra.utils.ObjectSizes;
 /**
  * Created by mkjellman on 1/12/17.
  */
-public class IndexInfo
+public class IndexInfo implements TreeSerializable
 {
     private static final long EMPTY_SIZE = ObjectSizes.measure(new IndexInfo(null, null, 0, 0, null));
 
-    public final long offset;
-    public final long width;
-    public final ClusteringPrefix firstName;
-    public final ClusteringPrefix lastName;
+    public static final IndexInfoSerializer SERIALIZER = new IndexInfoSerializer();
+
+    private final long offset;
+    private final long width;
+    private final ClusteringPrefix firstName;
+    private final ClusteringPrefix lastName;
 
     // If at the end of the index block there is an open range tombstone marker, this marker
     // deletion infos. null otherwise.
-    public final DeletionTime endOpenMarker;
+    //public final DeletionTime endOpenMarker;
+    public DeletionTime endOpenMarker;
 
     public IndexInfo(ClusteringPrefix firstName,
                      ClusteringPrefix lastName,
@@ -57,7 +63,12 @@ public class IndexInfo
         this.endOpenMarker = endOpenMarker;
     }
 
-    public static class Serializer implements ISerializer<IndexInfo>
+    public void setEndOpenMarker(DeletionTime endOpenMarker)
+    {
+        this.endOpenMarker = endOpenMarker;
+    }
+    
+    public static class Serializer
     {
         // This is the default index size that we use to delta-encode width when serializing so we get better vint-encoding.
         // This is imperfect as user can change the index size and ideally we would save the index size used with each index file
@@ -76,8 +87,8 @@ public class IndexInfo
 
         public void serialize(IndexInfo info, DataOutputPlus out) throws IOException
         {
-            ClusteringPrefix.serializer.serialize(info.firstName, out, version, clusteringTypes);
-            ClusteringPrefix.serializer.serialize(info.lastName, out, version, clusteringTypes);
+            ClusteringPrefix.serializer.serialize(info.getFirstName(), out, version, clusteringTypes);
+            ClusteringPrefix.serializer.serialize(info.getLastName(), out, version, clusteringTypes);
             out.writeUnsignedVInt(info.offset);
             out.writeVInt(info.width - WIDTH_BASE);
 
@@ -118,5 +129,47 @@ public class IndexInfo
                + firstName.unsharedHeapSize()
                + lastName.unsharedHeapSize()
                + (endOpenMarker == null ? 0 : endOpenMarker.unsharedHeapSize());
+    }
+
+    public ClusteringPrefix getFirstName()
+    {
+        return firstName;
+    }
+
+    public ClusteringPrefix getLastName()
+    {
+        return lastName;
+    }
+
+    public long getOffset()
+    {
+        return offset;
+    }
+
+    public long getWidth()
+    {
+        return width;
+    }
+
+
+    public ByteBuffer serializedKey(ClusteringComparator comparator) throws IOException
+    {
+        return ClusteringPrefix.serializer.serialize(getLastName(), 0, comparator.subtypes());
+    }
+
+    public void serializeValue(PageAlignedWriter writer) throws IOException
+    {
+        SERIALIZER.serializeValue(this, writer);
+    }
+
+    public int serializedKeySize(ClusteringComparator comparator) throws IOException
+    {
+        ByteBuffer key = serializedKey(comparator);
+        return key.limit() - key.position();
+    }
+
+    public int serializedValueSize()
+    {
+        return Long.BYTES + Long.BYTES + Byte.BYTES;
     }
 }

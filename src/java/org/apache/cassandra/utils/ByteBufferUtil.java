@@ -82,6 +82,7 @@ public class ByteBufferUtil
     public static final ByteBuffer EMPTY_BYTE_BUFFER = ByteBuffer.wrap(new byte[0]);
     /** Represents an unset value in bound variables */
     public static final ByteBuffer UNSET_BYTE_BUFFER = ByteBuffer.wrap(new byte[]{});
+    public static final ByteBuffer[] EMPTY_BYTE_BUFFER_ARRAY = new ByteBuffer[0];
 
     @Inline
     public static int compareUnsigned(ByteBuffer o1, ByteBuffer o2)
@@ -770,5 +771,56 @@ public class ByteBufferUtil
         }
 
         return true;
+    }
+
+    public static ByteBuffer merge(ByteBuffer[] buffers)
+    {
+        if (buffers.length == 0)
+            return ByteBufferUtil.EMPTY_BYTE_BUFFER;
+
+        int size = Short.BYTES; // encode the number of encoded elements
+        for (int i = 0; i < buffers.length; i++)
+        {
+            size += Short.BYTES; // encode the length of the ByteBuffer to follow
+            ByteBuffer next = buffers[i];
+            size += (next == null) ? 0 : next.limit() - next.position();
+        }
+
+        ByteBuffer ret = ByteBuffer.allocate(size);
+        ret.putShort((short) buffers.length);
+        for (int i = 0; i < buffers.length; i++)
+        {
+            ByteBuffer next = buffers[i];
+            if (next == null)
+            {
+                ret.putShort((short) 0);
+            }
+            else
+            {
+                int length = next.limit() - next.position();
+                ret.putShort((short) length);
+                byte[] backingBuf = next.array();
+                ret.put(backingBuf, next.position(), length);
+            }
+        }
+
+        ret.limit(ret.position());
+        ret.position(0);
+
+        return ret;
+    }
+
+    public static ByteBuffer[] splitSegmentedByteBuffer(ByteBuffer bb)
+    {
+        if (bb.remaining() == 0)
+            return EMPTY_BYTE_BUFFER_ARRAY;
+
+        short numSegments = bb.getShort();
+        ByteBuffer[] segments = new ByteBuffer[numSegments];
+        for (int i = 0; i < numSegments; i++)
+        {
+            segments[i] = ByteBufferUtil.readBytesWithShortLength(bb);
+        }
+        return segments;
     }
 }

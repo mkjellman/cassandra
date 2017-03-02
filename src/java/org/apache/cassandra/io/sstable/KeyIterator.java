@@ -21,6 +21,8 @@ import java.io.File;
 import java.io.IOException;
 
 import org.apache.cassandra.db.IndexedEntry;
+import org.apache.cassandra.io.util.PageAlignedReader;
+import org.apache.cassandra.io.util.FileDataInput;
 import org.apache.cassandra.utils.AbstractIterator;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.dht.IPartitioner;
@@ -35,17 +37,41 @@ public class KeyIterator extends AbstractIterator<DecoratedKey> implements Close
     private final static class In
     {
         private final File path;
-        private RandomAccessReader in;
+        private final Descriptor desc;
+        private FileDataInput in;
 
-        public In(File path)
+        private boolean hasIteratedOnce;
+
+        public In(File path, Descriptor desc)
         {
             this.path = path;
+            this.desc = desc;
         }
 
         private void maybeInit()
         {
             if (in == null)
-                in = RandomAccessReader.open(path);
+            {
+                if (desc.version.hasBirchIndexes())
+                {
+                    try
+                    {
+                        PageAlignedReader reader = PageAlignedReader.open(path);
+                        // todo: kjkj is this the right thing to do?
+                        reader.setSegment(0);
+                        in = reader;
+                        hasIteratedOnce = false;
+                    }
+                    catch (IOException e)
+                    {
+                        throw new RuntimeException(e);
+                    }
+                }
+                else
+                {
+                    in = RandomAccessReader.open(path);
+                }
+            }
         }
 
         public DataInputPlus get()
@@ -54,13 +80,13 @@ public class KeyIterator extends AbstractIterator<DecoratedKey> implements Close
             return in;
         }
 
-        public boolean isEOF()
+        public boolean isEOF() throws IOException
         {
             maybeInit();
             return in.isEOF();
         }
 
-        public void close()
+        public void close() throws IOException
         {
             if (in != null)
                 in.close();
@@ -75,7 +101,14 @@ public class KeyIterator extends AbstractIterator<DecoratedKey> implements Close
         public long length()
         {
             maybeInit();
-            return in.length();
+            if (!desc.version.hasBirchIndexes())
+            {
+                return ((RandomAccessReader) in).length();
+            }
+            else
+            {
+                return 0;
+            }
         }
     }
 
@@ -88,7 +121,7 @@ public class KeyIterator extends AbstractIterator<DecoratedKey> implements Close
     public KeyIterator(Descriptor desc, TableMetadata metadata)
     {
         this.desc = desc;
-        in = new In(new File(desc.filenameFor(Component.PRIMARY_INDEX)));
+        in = new In(new File(desc.filenameFor(Component.PRIMARY_INDEX)), desc);
         partitioner = metadata.partitioner;
     }
 
@@ -96,13 +129,41 @@ public class KeyIterator extends AbstractIterator<DecoratedKey> implements Close
     {
         try
         {
-            if (in.isEOF())
-                return endOfData();
+            if (desc.version.hasBirchIndexes())
+            {
+                PageAlignedReader reader = (PageAlignedReader) in.get();
 
-            keyPosition = in.getFilePointer();
-            DecoratedKey key = partitioner.decorateKey(ByteBufferUtil.readWithShortLength(in.get()));
-            IndexedEntry.Serializer.skip(in.get(), desc.version); // skip remainder of the entry
-            return key;
+                if (reader.hasNextSegment())
+                {
+                    if (in.hasIteratedOnce)
+                        reader.nextSegment();
+                }
+                else
+                {
+                    // if a file has only one segment, we need to iterate
+                    // at least once to return the only valid segment before
+                    // returning endOfData()
+                    if (in.hasIteratedOnce)
+                        return endOfData();
+                    else
+                        in.hasIteratedOnce = true;
+                }
+
+                reader.seekToStartOfCurrentSubSegment();
+
+                in.hasIteratedOnce = true;
+                return partitioner.decorateKey(ByteBufferUtil.readWithShortLength(in.get()));
+            }
+            else
+            {
+                if (in.isEOF())
+                    return endOfData();
+
+                keyPosition = in.getFilePointer();
+                DecoratedKey key = partitioner.decorateKey(ByteBufferUtil.readWithShortLength(in.get()));
+                IndexedEntry.Serializer.skip(in.get(), desc.version); // skip remainder of the entry
+                return key;
+            }
         }
         catch (IOException e)
         {
@@ -112,17 +173,35 @@ public class KeyIterator extends AbstractIterator<DecoratedKey> implements Close
 
     public void close()
     {
-        in.close();
+        try
+        {
+            in.close();
+        }
+        catch (IOException e)
+        {
+            throw new RuntimeException(e);
+        }
     }
 
     public long getBytesRead()
     {
-        return in.getFilePointer();
+        // todo: kjkj... how should this actually be calculated with new design? this seems broken even in current design
+        if (!desc.version.hasBirchIndexes())
+            return in.getFilePointer();
+        else
+            return 1L;
     }
 
     public long getTotalBytes()
     {
-        return in.length();
+        if (!desc.version.hasBirchIndexes())
+        {
+            return ((RandomAccessReader) in.get()).length();
+        }
+        else
+        {
+            return 0; // todo: what size do we return for birch entries?
+        }
     }
 
     public long getKeyPosition()

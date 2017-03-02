@@ -76,7 +76,14 @@ class SSTableSimpleUnsortedWriter extends AbstractSSTableSimpleWriter
         if (previous == null)
         {
             previous = createPartitionUpdate(key);
-            currentSize += PartitionUpdate.serializer.serializedSize(previous, formatType.info.getLatestVersion().correspondingMessagingVersion());
+            try
+            {
+                currentSize += PartitionUpdate.serializer.serializedSize(previous, formatType.info.getLatestVersion().correspondingMessagingVersion());
+            }
+            catch (IOException e)
+            {
+                throw new RuntimeException(e);
+            }
             previous.allowNewUpdates();
             buffer.put(key, previous);
         }

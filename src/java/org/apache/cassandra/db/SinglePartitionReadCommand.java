@@ -1207,7 +1207,7 @@ public class SinglePartitionReadCommand extends ReadCommand
         private int mergedSSTables;
 
         @Override
-        public void onSSTableSelected(SSTableReader sstable, RowIndexEntry<?> indexEntry, SelectionReason reason)
+        public void onSSTableSelected(SSTableReader sstable, IndexedEntry indexEntry, SelectionReason reason)
         {
             sstable.incrementReadCount();
             mergedSSTables++;

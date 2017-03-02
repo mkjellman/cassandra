@@ -363,6 +363,9 @@ public class Config
     public RepairCommandPoolFullStrategy repair_command_pool_full_strategy = RepairCommandPoolFullStrategy.queue;
     public int repair_command_pool_size = concurrent_validations;
 
+    // the size to pad an aligned index segment to
+    public int sstable_index_segment_padding_in_kb = 4096;
+
     public String full_query_log_dir = null;
 
     /**

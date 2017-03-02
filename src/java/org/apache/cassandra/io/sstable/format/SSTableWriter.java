@@ -18,6 +18,7 @@
 
 package org.apache.cassandra.io.sstable.format;
 
+import java.io.IOException;
 import java.util.*;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -191,7 +192,7 @@ public abstract class SSTableWriter extends SSTable implements Transactional
         return ImmutableList.copyOf(observers);
     }
 
-    public abstract void mark();
+    public abstract void mark() throws IOException;
 
     /**
      * Appends partition data to this writer.

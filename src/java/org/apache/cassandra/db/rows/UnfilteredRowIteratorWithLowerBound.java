@@ -173,15 +173,14 @@ public class UnfilteredRowIteratorWithLowerBound extends LazilyInitializedUnfilt
             maybeInit();
 
         IndexedEntry indexEntry = sstable.getCachedPosition(partitionKey(), false);
-        if (indexEntry == null)
+        if (indexEntry == null || !indexEntry.isIndexed() || (indexEntry.isIndexed() && !indexEntry.hasNext()))
             return null;
 
-        List<IndexInfo> columns = indexEntry.getAllColumnIndexes();
-        if (columns.size() == 0)
-            return null;
 
-        IndexInfo column = columns.get(filter.isReversed() ? columns.size() - 1 : 0);
-        ClusteringPrefix lowerBoundPrefix = filter.isReversed() ? column.lastName : column.firstName;
+        // todo kjkjk
+        //IndexInfo column = indexEntry.next();
+        IndexInfo column = indexEntry.peek();
+        ClusteringPrefix lowerBoundPrefix = filter.isReversed() ? column.getLastName() : column.getFirstName();
         assert lowerBoundPrefix.getRawValues().length <= metadata().comparator.size() :
             String.format("Unexpected number of clustering values %d, expected %d or fewer for %s",
                           lowerBoundPrefix.getRawValues().length,

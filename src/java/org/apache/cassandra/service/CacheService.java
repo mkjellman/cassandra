@@ -440,7 +440,8 @@ public class CacheService implements CacheServiceMBean
             out.writeBoolean(true);
 
             SerializationHeader header = new SerializationHeader(false, cfs.metadata(), cfs.metadata().regularAndStaticColumns(), EncodingStats.NO_STATS);
-            key.desc.getFormat().getIndexSerializer(cfs.metadata(), key.desc.version, header).serialize(entry, out);
+            //key.desc.getFormat().getIndexSerializer(cfs.metadata(), key.desc.version, header).serialize(entry, out);
+            //todo kjkj: what do we need to do here...
         }
 
         public Future<Pair<KeyCacheKey, IndexedEntry>> deserialize(DataInputPlus input, ColumnFamilyStore cfs) throws IOException

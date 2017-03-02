@@ -18,6 +18,7 @@
 
 package org.apache.cassandra.io.util;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 
 /**
@@ -49,6 +50,11 @@ public class FileSegmentInputStream extends DataInputBuffer implements FileDataI
     public boolean isEOF()
     {
         return !buffer.hasRemaining();
+    }
+
+    public boolean isCurrentSegmentExausted() throws IOException
+    {
+        return isEOF();
     }
 
     public long bytesRemaining()

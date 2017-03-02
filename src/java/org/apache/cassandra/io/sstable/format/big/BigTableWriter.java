@@ -33,6 +33,7 @@ import org.apache.cassandra.db.transform.Transformation;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.compress.CompressedSequentialWriter;
 import org.apache.cassandra.io.sstable.*;
+import org.apache.cassandra.io.sstable.birch.PageAlignedWriter;
 import org.apache.cassandra.io.sstable.format.SSTableFlushObserver;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.format.SSTableWriter;
@@ -97,7 +98,7 @@ public class BigTableWriter extends SSTableWriter
         iwriter = new IndexWriter(keyCount);
     }
 
-    public void mark()
+    public void mark() throws IOException
     {
         dataMark = dataFile.mark();
         iwriter.mark();
@@ -156,7 +157,16 @@ public class BigTableWriter extends SSTableWriter
             return null;
 
         long startPosition = beforeAppend(key);
-        observers.forEach((o) -> o.startPartition(key, iwriter.indexFile.position()));
+        long currentPosition;
+        try
+        {
+            currentPosition = iwriter.indexFile.getCurrentFilePosition();
+        }
+        catch (IOException e)
+        {
+            throw new FSWriteError(e, dataFile.getPath());
+        }
+        observers.forEach((o) -> o.startPartition(key, currentPosition));
 
         try (UnfilteredRowIterator collecting = Transformation.apply(iterator, new StatsCollector(metadataCollector)))
         {
@@ -257,7 +267,9 @@ public class BigTableWriter extends SSTableWriter
         IndexSummary indexSummary = iwriter.summary.build(metadata().partitioner, boundary);
         long indexFileLength = new File(descriptor.filenameFor(Component.PRIMARY_INDEX)).length();
         int indexBufferSize = optimizationStrategy.bufferSize(indexFileLength / indexSummary.size());
-        FileHandle ifile = iwriter.builder.bufferSize(indexBufferSize).complete(boundary.indexLength);
+        logger.info("in BigTableWriter#openEarly() not using calculated indexBufferSize {}", indexBufferSize);
+        //FileHandle ifile = iwriter.builder.bufferSize(indexBufferSize).complete(boundary.indexLength);
+        FileHandle ifile = iwriter.builder.complete(boundary.indexLength);
         if (compression)
             dbuilder.withCompressionMetadata(((CompressedSequentialWriter) dataFile).open(boundary.dataLength));
         int dataBufferSize = optimizationStrategy.bufferSize(stats.estimatedPartitionSize.percentile(DatabaseDescriptor.getDiskOptimizationEstimatePercentile()));
@@ -287,7 +299,7 @@ public class BigTableWriter extends SSTableWriter
     {
         // we must ensure the data is completely flushed to disk
         dataFile.sync();
-        iwriter.indexFile.sync();
+        // iwriter.indexFile.sync(); // kjkj what to do given we don't have early open
 
         return openFinal(SSTableReader.OpenReason.EARLY);
     }
@@ -304,7 +316,9 @@ public class BigTableWriter extends SSTableWriter
         long indexFileLength = new File(descriptor.filenameFor(Component.PRIMARY_INDEX)).length();
         int dataBufferSize = optimizationStrategy.bufferSize(stats.estimatedPartitionSize.percentile(DatabaseDescriptor.getDiskOptimizationEstimatePercentile()));
         int indexBufferSize = optimizationStrategy.bufferSize(indexFileLength / indexSummary.size());
-        FileHandle ifile = iwriter.builder.bufferSize(indexBufferSize).complete();
+        logger.info("in BigTableWriter#openFinal() not using calculated indexBufferSize {}", indexBufferSize);
+        //FileHandle ifile = iwriter.builder.bufferSize(indexBufferSize).complete();
+        FileHandle ifile = iwriter.builder.complete();
         if (compression)
             dbuilder.withCompressionMetadata(((CompressedSequentialWriter) dataFile).open(0));
         FileHandle dfile = dbuilder.bufferSize(dataBufferSize).complete();
@@ -404,7 +418,7 @@ public class BigTableWriter extends SSTableWriter
      */
     class IndexWriter extends AbstractTransactional implements Transactional
     {
-        private final SequentialWriter indexFile;
+        private final PageAlignedWriter indexFile;
         public final FileHandle.Builder builder;
         public final IndexSummaryBuilder summary;
         public final IFilter bf;
@@ -412,9 +426,12 @@ public class BigTableWriter extends SSTableWriter
 
         IndexWriter(long keyCount)
         {
-            indexFile = new SequentialWriter(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)), writerOption);
-            builder = new FileHandle.Builder(descriptor.filenameFor(Component.PRIMARY_INDEX)).mmapped(DatabaseDescriptor.getIndexAccessMode() == Config.DiskAccessMode.mmap);
-            chunkCache.ifPresent(builder::withChunkCache);
+            indexFile = PageAlignedWriter.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
+            builder = new FileHandle.Builder(descriptor.filenameFor(Component.PRIMARY_INDEX))
+                      .mmapped(DatabaseDescriptor.getIndexAccessMode() == Config.DiskAccessMode.mmap
+                               && !descriptor.version.hasBirchIndexes())
+                      .pageAligned(descriptor.version.hasBirchIndexes());
+            //chunkCache.ifPresent(builder::withChunkCache); // kjkj todo
             summary = new IndexSummaryBuilder(keyCount, metadata().params.minIndexInterval, Downsampling.BASE_SAMPLING_LEVEL);
             bf = FilterFactory.getFilter(keyCount, metadata().params.bloomFilterFpChance, true);
             // register listeners to be alerted when the data files are flushed
@@ -431,17 +448,23 @@ public class BigTableWriter extends SSTableWriter
         public void append(DecoratedKey key, IndexedEntry indexEntry, long dataEnd) throws IOException
         {
             bf.add(key);
-            long indexStart = indexFile.position();
+            long indexStart = indexFile.getFilePointer();
             try
             {
-                ByteBufferUtil.writeWithShortLength(key.getKey(), indexFile);
+                indexFile.startNewSegment();
+                indexFile.startNewNonPageAlignedSubSegment();
+                logger.info("startNewNonPageAlignedSubSegment()... current file offset is {} key ==> position() {} capacity() {} limit() {}",
+                            indexFile.getCurrentFilePosition(), key.getKey().position(), key.getKey().capacity(), key.getKey().limit());
+                ByteBufferUtil.writeWithShortLength(key.getKey(), indexFile.stream);
+                logger.info("after writeWithShortLength.... indexFile.getCurrentFilePosition() {} key ==> position() {} capacity() {} limit() {}",
+                            indexFile.getCurrentFilePosition(), key.getKey().position(), key.getKey().capacity(), key.getKey().limit());
                 rowIndexEntrySerializer.serialize(indexEntry, indexFile);
             }
             catch (IOException e)
             {
                 throw new FSWriteError(e, indexFile.getPath());
             }
-            long indexEnd = indexFile.position();
+            long indexEnd = indexFile.getFilePointer();
 
             if (logger.isTraceEnabled())
                 logger.trace("wrote index entry: {} at {}", indexEntry, indexStart);
@@ -472,7 +495,7 @@ public class BigTableWriter extends SSTableWriter
             }
         }
 
-        public void mark()
+        public void mark() throws IOException
         {
             mark = indexFile.mark();
         }
@@ -482,17 +505,18 @@ public class BigTableWriter extends SSTableWriter
             // we can't un-set the bloom filter addition, but extra keys in there are harmless.
             // we can't reset dbuilder either, but that is the last thing called in afterappend so
             // we assume that if that worked then we won't be trying to reset.
-            indexFile.resetAndTruncate(mark);
+            //indexFile.resetAndTruncate(mark); //kjkj only used for early open -- so remove?
         }
 
         protected void doPrepare()
         {
             flushBf();
 
-            // truncate index file
-            long position = indexFile.position();
             indexFile.prepareToCommit();
-            FileUtils.truncate(indexFile.getPath(), position);
+            // truncate index file
+            //long position = indexFile.position();
+            //indexFile.prepareToCommit();
+            //FileUtils.truncate(indexFile.getPath(), position);
 
             // save summary
             summary.prepareToCommit();

@@ -834,7 +834,7 @@ public class PartitionUpdate extends AbstractBTreePartition
                                        false);
         }
 
-        public long serializedSize(PartitionUpdate update, int version)
+        public long serializedSize(PartitionUpdate update, int version) throws IOException
         {
             try (UnfilteredRowIterator iter = update.unfilteredIterator())
             {

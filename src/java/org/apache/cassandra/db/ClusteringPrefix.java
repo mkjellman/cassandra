@@ -28,7 +28,9 @@ import org.apache.cassandra.config.*;
 import org.apache.cassandra.db.marshal.CompositeType;
 import org.apache.cassandra.db.rows.*;
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataInputPlus;
+import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -284,6 +286,13 @@ public interface ClusteringPrefix extends IMeasurableMemory, Clusterable
             }
         }
 
+        public ByteBuffer serialize(ClusteringPrefix clustering, int version, List<AbstractType<?>> types) throws IOException
+        {
+            DataOutputBuffer buffer = new DataOutputBuffer();
+            serialize(clustering, buffer, version, types);
+            return buffer.asNewBuffer();
+        }
+
         public ClusteringPrefix deserialize(DataInputPlus in, int version, List<AbstractType<?>> types) throws IOException
         {
             Kind kind = Kind.values()[in.readByte()];
@@ -293,6 +302,18 @@ public interface ClusteringPrefix extends IMeasurableMemory, Clusterable
                 return Clustering.serializer.deserialize(in, version, types);
             else
                 return ClusteringBoundOrBoundary.serializer.deserializeValues(in, kind, version, types);
+        }
+
+        public ClusteringPrefix deserialize(ByteBuffer buf, int version, List<AbstractType<?>> types) throws IOException
+        {
+            try (DataInputBuffer buffer = new DataInputBuffer(buf, true))
+            {
+                return deserialize(buffer, version, types);
+            }
+            catch (IOException e)
+            {
+                throw new RuntimeException("Reading from an in-memory buffer shouldn't trigger an IOException", e);
+            }
         }
 
         public long serializedSize(ClusteringPrefix clustering, int version, List<AbstractType<?>> types)

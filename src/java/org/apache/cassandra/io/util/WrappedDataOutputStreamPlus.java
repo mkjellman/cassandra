@@ -19,7 +19,10 @@ package org.apache.cassandra.io.util;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.channels.Channels;
 import java.nio.channels.WritableByteChannel;
+
+import org.apache.cassandra.utils.Wrapped;
 
 /**
  * When possible use {@link WrappedDataOutputStreamPlus} instead of this class, as it will
@@ -40,6 +43,11 @@ public class WrappedDataOutputStreamPlus extends UnbufferedDataOutputStreamPlus
     {
         super(channel);
         this.out = out;
+    }
+
+    public WrappedDataOutputStreamPlus(WritableByteChannel channel)
+    {
+        this(Channels.newOutputStream(channel), channel);
     }
 
     @Override

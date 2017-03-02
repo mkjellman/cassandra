@@ -91,7 +91,7 @@ public class NativeLibraryDarwin implements NativeLibraryWrapper
         return fcntl(fd, command, flags);
     }
 
-    public int callPosixFadvise(int fd, long offset, int len, int flag) throws UnsatisfiedLinkError, RuntimeException
+    public int callPosixFadvise(int fd, long offset, long len, int flag) throws UnsatisfiedLinkError, RuntimeException
     {
         // posix_fadvise is not available on Darwin/Mac
         throw new UnsatisfiedLinkError();

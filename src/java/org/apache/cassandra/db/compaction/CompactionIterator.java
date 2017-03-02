@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.db.compaction;
 
+import java.io.IOException;
 import java.util.*;
 import java.util.function.LongPredicate;
 

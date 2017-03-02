@@ -24,18 +24,18 @@ import java.util.Iterator;
 import java.util.List;
 
 import org.apache.cassandra.cache.IMeasurableMemory;
+import org.apache.cassandra.io.sstable.birch.BirchWriter;
+import org.apache.cassandra.io.util.PageAlignedReader;
+import org.apache.cassandra.io.sstable.birch.PageAlignedWriter;
 import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.util.DataInputPlus;
-import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.schema.TableMetadata;
 
-/**
- * Created by mkjellman on 1/12/17.
- */
-public interface IndexedEntry extends IMeasurableMemory, Iterator<IndexInfo>
+public interface IndexedEntry extends IMeasurableMemory, Iterator<IndexInfo>, AutoCloseable
 {
     IndexInfo getIndexInfo(ClusteringPrefix name, ClusteringComparator comparator, boolean reversed) throws IOException;
 
-    void startIteratorAt(ClusteringPrefix name, ClusteringComparator comparator, boolean reversed) throws IOException;
+    void setIteratorBounds(ClusteringBound start, ClusteringBound end, ClusteringComparator comparator, boolean reversed) throws IOException;
 
     /**
      * The length of the row header (partition key, partition deletion and static row).
@@ -49,6 +49,8 @@ public interface IndexedEntry extends IMeasurableMemory, Iterator<IndexInfo>
     void close();
 
     boolean isReversed();
+
+    void setReversed(boolean reversed);
 
     IndexInfo peek();
 
@@ -70,83 +72,95 @@ public interface IndexedEntry extends IMeasurableMemory, Iterator<IndexInfo>
 
     public static class Serializer
     {
+        private final TableMetadata metadata;
         private final IndexInfo.Serializer idxSerializer;
         private final Version version;
+        private final SerializationHeader header;
 
-        public Serializer(Version version, SerializationHeader header)
+        public Serializer(TableMetadata metadata, Version version, SerializationHeader header)
         {
+            this.metadata = metadata;
             this.idxSerializer = new IndexInfo.Serializer(version, header.clusteringTypes());
             this.version = version;
+            this.header = header;
         }
 
-        public void serialize(IndexedEntry rie, DataOutputPlus out) throws IOException
+        public void serialize(IndexedEntry rie, PageAlignedWriter writer) throws IOException
         {
-            out.writeUnsignedVInt(rie.getPosition());
-            out.writeUnsignedVInt(rie.promotedSize(idxSerializer));
+            writer.writeBoolean(rie.isIndexed()); // is following serializated index entry indexed?
+            writer.writeLong(rie.getPosition());
 
             if (rie.isIndexed())
             {
-                out.writeUnsignedVInt(rie.headerLength());
-                DeletionTime.serializer.serialize(rie.deletionTime(), out);
-                out.writeUnsignedVInt(rie.entryCount());
-
-                // Calculate and write the offsets to the IndexInfo objects.
-
-                int[] offsets = new int[rie.entryCount()];
-
-                if (out.hasPosition())
-                {
-                    // Out is usually a SequentialWriter, so using the file-pointer is fine to generate the offsets.
-                    // A DataOutputBuffer also works.
-                    long start = out.position();
-                    int i = 0;
-                    for (IndexInfo info : rie.getAllColumnIndexes())
-                    {
-                        offsets[i] = i == 0 ? 0 : (int)(out.position() - start);
-                        i++;
-                        idxSerializer.serialize(info, out);
-                    }
-                }
-                else
-                {
-                    // Not sure this branch will ever be needed, but if it is called, it has to calculate the
-                    // serialized sizes instead of simply using the file-pointer.
-                    int i = 0;
-                    int offset = 0;
-                    for (IndexInfo info : rie.getAllColumnIndexes())
-                    {
-                        offsets[i++] = offset;
-                        idxSerializer.serialize(info, out);
-                        offset += idxSerializer.serializedSize(info);
-                    }
-                }
-
-                for (int off : offsets)
-                    out.writeInt(off);
+                //writer.writeLong(rie.headerLength());
+                DeletionTime.serializer.serialize(rie.deletionTime(), writer.stream);
+                writer.finalizeCurrentSubSegment();
+                BirchWriter birchWriter = new BirchWriter.Builder(rie.getAllColumnIndexes().iterator(), BirchWriter.SerializerType.INDEXINFO, metadata.comparator).build();
+                writer.startNewSubSegment(birchWriter.getCacheLineSize());
+                birchWriter.serialize(writer);
+                writer.finalizeCurrentSubSegment();
+                writer.finalizeCurrentSegment();
+            }
+            else
+            {
+                writer.finalizeCurrentSubSegment();
+                writer.finalizeCurrentSegment();
             }
         }
 
         public IndexedEntry deserialize(DataInputPlus in) throws IOException
         {
-            long position = in.readUnsignedVInt();
-
-            int size = (int)in.readUnsignedVInt();
-            if (size > 0)
+            // instanceof check is a "hack" for now to use the "old"/legacy/pre-birch deserialization
+            // logic with the AutoSavingCache
+            if (version.hasBirchIndexes() && in instanceof PageAlignedReader)
             {
-                long headerLength = in.readUnsignedVInt();
-                DeletionTime deletionTime = DeletionTime.serializer.deserialize(in);
-                int entries = (int)in.readUnsignedVInt();
-                List<IndexInfo> columnsIndex = new ArrayList<>(entries);
-                for (int i = 0; i < entries; i++)
-                    columnsIndex.add(idxSerializer.deserialize(in));
+                // todo kjkj: should we do a copy here?
+                PageAlignedReader reader = (PageAlignedReader) in;
 
-                in.skipBytesFully(entries * TypeSizes.sizeof(0));
+                boolean isIndexed = reader.readBoolean();
+                //long position = in.readUnsignedVInt();
+                long position = reader.readLong();
 
-                return new OnHeapIndexedEntry(position, deletionTime, headerLength, columnsIndex, null);
+                if (isIndexed)
+                {
+                    //long headerLength = reader.readLong();
+                    //long headerLength = reader.readUnsignedVInt();
+                    DeletionTime deletionTime = DeletionTime.serializer.deserialize(reader);
+                    reader.nextSubSegment();
+                    //PageAlignedReader readerCopy = PageAlignedReader.copy((PageAlignedReader) in);
+                    IndexedEntry entry = new BirchIndexedEntry(position, metadata.comparator, header, version,
+                                                               reader, 0, deletionTime);
+                    reader.seekToEndOfCurrentSubSegment();
+                    return entry;
+                }
+                else
+                {
+                    return new NonIndexedRowEntry(position, 0, reader);
+                }
             }
             else
             {
-                return new NonIndexedRowEntry(position, null);
+                long position = in.readUnsignedVInt();
+
+                int size = (int) in.readUnsignedVInt();
+                if (size > 0)
+                {
+                    long headerLength = in.readUnsignedVInt();
+                    DeletionTime deletionTime = DeletionTime.serializer.deserialize(in);
+                    int entries = (int) in.readUnsignedVInt();
+                    List<IndexInfo> columnsIndex = new ArrayList<>(entries);
+                    for (int i = 0; i < entries; i++)
+                        columnsIndex.add(idxSerializer.deserialize(in));
+
+                    in.skipBytesFully(entries * TypeSizes.sizeof(0));
+
+                    return new OnHeapIndexedEntry(position, deletionTime, headerLength, columnsIndex, null);
+                }
+                else
+                {
+                    // todo kjkj: does the old format expect a headerlength to be serialized??
+                    return new NonIndexedRowEntry(position, 0, null);
+                }
             }
         }
 
@@ -160,8 +174,37 @@ public interface IndexedEntry extends IMeasurableMemory, Iterator<IndexInfo>
 
         public static void skip(DataInputPlus in, Version version) throws IOException
         {
-            readPosition(in, version);
-            skipPromotedIndex(in);
+            if (version.hasBirchIndexes())
+            {
+                PageAlignedReader reader = (PageAlignedReader) in;
+
+                // todo: kjkj can this be cleaned up/simplified? e.g. i think the logic should/could be,
+                // always set to start of next segment unless current segment is the last segment, in
+                // which case seek to the end of the current segment
+                if (reader.getCurrentSegmentIdx() == reader.numberOfSegments() - 1)
+                {
+                    // if the current sub-segment is the last available sub-segment (and current is the last segment)
+                    // seek to the end of the sub-segment to ensure isEOF will return true regardless of iteration order
+                    if (reader.getCurrentSubSegmentIdx() == reader.numberOfSubSegments() - 1)
+                    {
+                        reader.seekToEndOfCurrentSegment();
+                    }
+                    else
+                    {
+                        // skip to the beginning of the next sub-segment
+                        reader.setSegment(reader.getCurrentSegmentIdx(), reader.getCurrentSubSegmentIdx() + 1);
+                    }
+                }
+                else
+                {
+                    reader.setSegment(reader.getCurrentSegmentIdx() + 1);
+                }
+            }
+            else
+            {
+                readPosition(in, version);
+                skipPromotedIndex(in);
+            }
         }
 
         private static void skipPromotedIndex(DataInputPlus in) throws IOException
@@ -180,9 +223,11 @@ public interface IndexedEntry extends IMeasurableMemory, Iterator<IndexInfo>
             {
                 List<IndexInfo> index = rie.getAllColumnIndexes();
 
-                indexedSize += TypeSizes.sizeofUnsignedVInt(rie.headerLength());
+                indexedSize += TypeSizes.sizeof(rie.headerLength());
+                //indexedSize += TypeSizes.sizeofUnsignedVInt(rie.headerLength());
                 indexedSize += DeletionTime.serializer.serializedSize(rie.deletionTime());
-                indexedSize += TypeSizes.sizeofUnsignedVInt(index.size());
+                //indexedSize += TypeSizes.sizeofUnsignedVInt(index.size());
+                indexedSize += TypeSizes.sizeof(index.size());
 
                 for (IndexInfo info : index)
                     indexedSize += idxSerializer.serializedSize(info);
@@ -190,7 +235,8 @@ public interface IndexedEntry extends IMeasurableMemory, Iterator<IndexInfo>
                 indexedSize += index.size() * TypeSizes.sizeof(0);
             }
 
-            return TypeSizes.sizeofUnsignedVInt(rie.getPosition()) + TypeSizes.sizeofUnsignedVInt(indexedSize) + indexedSize;
+            return TypeSizes.sizeof(rie.getPosition()) + TypeSizes.sizeof(indexedSize) + indexedSize;
+            //return TypeSizes.sizeofUnsignedVInt(rie.getPosition()) + TypeSizes.sizeofUnsignedVInt(indexedSize) + indexedSize;
         }
     }
 }

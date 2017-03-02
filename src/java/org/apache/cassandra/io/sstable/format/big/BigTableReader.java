@@ -67,6 +67,10 @@ public class BigTableReader extends SSTableReader
                                           SSTableReadsListener listener)
     {
         IndexedEntry rie = getPosition(key, SSTableReader.Operator.EQ, listener);
+        if (rie != null)
+        {
+            rie.setReversed(reversed);
+        }
         return iterator(null, key, rie, slices, selectedColumns, reversed);
     }
 
@@ -210,10 +214,11 @@ public class BigTableReader extends SSTableReader
         // of the next interval).
         int i = 0;
         String path = null;
-        try (FileDataInput in = ifile.createReader(sampledPosition))
+        try (FileDataInput in = (descriptor.version.hasBirchIndexes()) ? ifile.createPageAlignedReader(sampledPosition)
+                                                                       : ifile.createReader(sampledPosition))
         {
             path = in.getPath();
-            while (!in.isEOF())
+            while (!in.isCurrentSegmentExausted())
             {
                 i++;
 
@@ -272,11 +277,13 @@ public class BigTableReader extends SSTableReader
                     return indexEntry;
                 }
 
-                IndexedEntry.Serializer.skip(in, descriptor.version);
+                if (!in.isCurrentSegmentExausted())
+                    IndexedEntry.Serializer.skip(in, descriptor.version);
             }
         }
         catch (IOException e)
         {
+            logger.error("something went badly wrong kjellman", e);
             markSuspect();
             throw new CorruptSSTableException(e, path);
         }

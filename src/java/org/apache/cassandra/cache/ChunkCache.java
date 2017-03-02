@@ -28,6 +28,9 @@ import com.google.common.base.Throwables;
 import com.google.common.collect.Iterables;
 import com.google.common.util.concurrent.MoreExecutors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.github.benmanes.caffeine.cache.*;
 import com.codahale.metrics.Timer;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -39,6 +42,8 @@ import org.apache.cassandra.utils.memory.BufferPool;
 public class ChunkCache
         implements CacheLoader<ChunkCache.Key, ChunkCache.Buffer>, RemovalListener<ChunkCache.Key, ChunkCache.Buffer>, CacheSize
 {
+    private static final Logger logger = LoggerFactory.getLogger(ChunkCache.class);
+
     public static final int RESERVED_POOL_SPACE_IN_MB = 32;
     public static final long cacheSize = 1024L * 1024L * Math.max(0, DatabaseDescriptor.getFileCacheSizeInMB() - RESERVED_POOL_SPACE_IN_MB);
     public static final boolean roundUp = DatabaseDescriptor.getFileCacheRoundUp();

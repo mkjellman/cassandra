@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.io.util;
 
+import java.io.IOException;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -144,6 +145,14 @@ public class FileHandle extends SharedCloseableImpl
         return new RandomAccessReader(instantiateRebufferer(limiter));
     }
 
+    public FileDataInput createPageAlignedReader(long position) throws IOException
+    {
+        PageAlignedReader reader = new PageAlignedReader(instantiateRebufferer(null), false);
+        reader.findAndSetSegmentAndSubSegmentCurrentForPosition(position); // kjkj (SSTableCorruptionDetectionTest)
+        reader.seek(position);
+        return reader;
+    }
+
     public FileDataInput createReader(long position)
     {
         RandomAccessReader reader = createReader();
@@ -179,7 +188,7 @@ public class FileHandle extends SharedCloseableImpl
     /**
      * Perform clean up of all resources held by {@link FileHandle}.
      */
-    private static class Cleanup implements RefCounted.Tidy
+    protected static class Cleanup implements RefCounted.Tidy
     {
         final ChannelProxy channel;
         final RebuffererFactory rebufferer;
@@ -242,6 +251,7 @@ public class FileHandle extends SharedCloseableImpl
 
         private boolean mmapped = false;
         private boolean compressed = false;
+        private boolean pageAligned = false;
 
         public Builder(String path)
         {
@@ -322,6 +332,19 @@ public class FileHandle extends SharedCloseableImpl
         }
 
         /**
+         * Input file was written in a Page Aligned format, and should be
+         * read using a Page Aligned aware reader.
+         *
+         * @param pageAligned if the input file is serialized in page aligned format
+         * @return this instance
+         */
+        public Builder pageAligned(boolean pageAligned)
+        {
+            this.pageAligned = pageAligned;
+            return this;
+        }
+
+        /**
          * Complete building {@link FileHandle} without overriding file length.
          *
          * @see #complete(long)
@@ -345,6 +368,8 @@ public class FileHandle extends SharedCloseableImpl
             {
                 channel = new ChannelProxy(path);
             }
+
+            logger.info("complete({}) called for {} ==> mmapped? {} compressed? {} pageAligned? {}", overrideLength, path, mmapped, compressed, pageAligned);
 
             ChannelProxy channelCopy = channel.sharedCopy();
             try

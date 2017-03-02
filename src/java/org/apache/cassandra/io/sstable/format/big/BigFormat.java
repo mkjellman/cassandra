@@ -73,9 +73,9 @@ public class BigFormat implements SSTableFormat
     }
 
     @Override
-    public IndexedEntry.Serializer getIndexSerializer(TableMetadata metadataa, Version version, SerializationHeader header)
+    public IndexedEntry.Serializer getIndexSerializer(TableMetadata metadata, Version version, SerializationHeader header)
     {
-        return new IndexedEntry.Serializer(version, header);
+        return new IndexedEntry.Serializer(metadata, version, header);
     }
 
     static class WriterFactory extends SSTableWriter.Factory
@@ -119,8 +119,7 @@ public class BigFormat implements SSTableFormat
         //             store rows natively
         // mb (3.0.7, 3.7): commit log lower bound included
         // mc (3.0.8, 3.9): commit log intervals included
-
-        // na (4.0.0): uncompressed chunks, pending repair session, checksummed sstable metadata file
+        // na (4.0.0): uncompressed chunks, pending repair session, checksummed sstable metadata file, birch indexes
         //
         // NOTE: when adding a new version, please add that to LegacySSTableTest, too.
 
@@ -131,6 +130,7 @@ public class BigFormat implements SSTableFormat
         public final boolean hasMaxCompressedLength;
         private final boolean hasPendingRepair;
         private final boolean hasMetadataChecksum;
+        private final boolean hasBirchIndexes;
 
         BigVersion(String version)
         {
@@ -144,6 +144,7 @@ public class BigFormat implements SSTableFormat
             hasMaxCompressedLength = version.compareTo("na") >= 0;
             hasPendingRepair = version.compareTo("na") >= 0;
             hasMetadataChecksum = version.compareTo("na") >= 0;
+            hasBirchIndexes = version.compareTo("na") >= 0;
         }
 
         @Override
@@ -167,6 +168,12 @@ public class BigFormat implements SSTableFormat
         public boolean hasPendingRepair()
         {
             return hasPendingRepair;
+        }
+
+        @Override
+        public boolean hasBirchIndexes()
+        {
+            return hasBirchIndexes;
         }
 
         @Override

@@ -123,8 +123,15 @@ public class Commit
 
         public long serializedSize(Commit commit, int version)
         {
-            return UUIDSerializer.serializer.serializedSize(commit.ballot, version)
-                 + PartitionUpdate.serializer.serializedSize(commit.update, version);
+            try
+            {
+                return UUIDSerializer.serializer.serializedSize(commit.ballot, version)
+                       + PartitionUpdate.serializer.serializedSize(commit.update, version);
+            }
+            catch (IOException e)
+            {
+                throw new RuntimeException(e);
+            }
         }
     }
 }

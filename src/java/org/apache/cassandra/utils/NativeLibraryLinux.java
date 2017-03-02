@@ -70,7 +70,7 @@ public class NativeLibraryLinux implements NativeLibraryWrapper
     private static native int mlockall(int flags) throws LastErrorException;
     private static native int munlockall() throws LastErrorException;
     private static native int fcntl(int fd, int command, long flags) throws LastErrorException;
-    private static native int posix_fadvise(int fd, long offset, int len, int flag) throws LastErrorException;
+    private static native int posix_fadvise(int fd, long offset, long len, int flag) throws LastErrorException;
     private static native int open(String path, int flags) throws LastErrorException;
     private static native int fsync(int fd) throws LastErrorException;
     private static native int close(int fd) throws LastErrorException;
@@ -92,7 +92,7 @@ public class NativeLibraryLinux implements NativeLibraryWrapper
         return fcntl(fd, command, flags);
     }
 
-    public int callPosixFadvise(int fd, long offset, int len, int flag) throws UnsatisfiedLinkError, RuntimeException
+    public int callPosixFadvise(int fd, long offset, long len, int flag) throws UnsatisfiedLinkError, RuntimeException
     {
         return posix_fadvise(fd, offset, len, flag);
     }

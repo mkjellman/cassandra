@@ -59,6 +59,8 @@ import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.io.FSError;
 import org.apache.cassandra.io.compress.CompressionMetadata;
 import org.apache.cassandra.io.sstable.*;
+import org.apache.cassandra.io.sstable.birch.AlignedSegment;
+import org.apache.cassandra.io.util.PageAlignedReader;
 import org.apache.cassandra.io.sstable.metadata.*;
 import org.apache.cassandra.io.util.*;
 import org.apache.cassandra.metrics.RestorableMeter;
@@ -437,8 +439,10 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
                                              header.toHeader(metadata.get()));
 
         try(FileHandle.Builder ibuilder = new FileHandle.Builder(sstable.descriptor.filenameFor(Component.PRIMARY_INDEX))
-                                                     .mmapped(DatabaseDescriptor.getIndexAccessMode() == Config.DiskAccessMode.mmap)
-                                                     .withChunkCache(ChunkCache.instance);
+                                                     .mmapped(DatabaseDescriptor.getIndexAccessMode() == Config.DiskAccessMode.mmap
+                                                              && !sstable.descriptor.version.hasBirchIndexes())
+                                                     .pageAligned(sstable.descriptor.version.hasBirchIndexes());
+                                                     //.withChunkCache(ChunkCache.instance);
             FileHandle.Builder dbuilder = new FileHandle.Builder(sstable.descriptor.filenameFor(Component.DATA)).compressed(sstable.compression)
                                                      .mmapped(DatabaseDescriptor.getDiskAccessMode() == Config.DiskAccessMode.mmap)
                                                      .withChunkCache(ChunkCache.instance))
@@ -457,7 +461,9 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
             long indexFileLength = new File(descriptor.filenameFor(Component.PRIMARY_INDEX)).length();
             int dataBufferSize = sstable.optimizationStrategy.bufferSize(statsMetadata.estimatedPartitionSize.percentile(DatabaseDescriptor.getDiskOptimizationEstimatePercentile()));
             int indexBufferSize = sstable.optimizationStrategy.bufferSize(indexFileLength / sstable.indexSummary.size());
-            sstable.ifile = ibuilder.bufferSize(indexBufferSize).complete();
+            logger.info("not using calculated indexBufferSize in openForBatch {}", indexBufferSize);
+            //sstable.ifile = ibuilder.bufferSize(indexBufferSize).complete();
+            sstable.ifile = ibuilder.complete();
             sstable.dfile = dbuilder.bufferSize(dataBufferSize).complete();
             sstable.bf = FilterFactory.AlwaysPresent;
             sstable.setup(false);
@@ -753,8 +759,9 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
     private void load(boolean recreateBloomFilter, boolean saveSummaryIfCreated) throws IOException
     {
         try(FileHandle.Builder ibuilder = new FileHandle.Builder(descriptor.filenameFor(Component.PRIMARY_INDEX))
-                                                     .mmapped(DatabaseDescriptor.getIndexAccessMode() == Config.DiskAccessMode.mmap)
-                                                     .withChunkCache(ChunkCache.instance);
+                                                     .mmapped(DatabaseDescriptor.getIndexAccessMode() == Config.DiskAccessMode.mmap
+                                                              && !descriptor.version.hasBirchIndexes());
+                                                     //.withChunkCache(ChunkCache.instance);
             FileHandle.Builder dbuilder = new FileHandle.Builder(descriptor.filenameFor(Component.DATA)).compressed(compression)
                                                      .mmapped(DatabaseDescriptor.getDiskAccessMode() == Config.DiskAccessMode.mmap)
                                                      .withChunkCache(ChunkCache.instance))
@@ -773,7 +780,9 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
             {
                 long indexFileLength = new File(descriptor.filenameFor(Component.PRIMARY_INDEX)).length();
                 int indexBufferSize = optimizationStrategy.bufferSize(indexFileLength / indexSummary.size());
-                ifile = ibuilder.bufferSize(indexBufferSize).complete();
+                logger.info("not using calculated indexBufferSize {}", indexBufferSize);
+                //ifile = ibuilder.bufferSize(indexBufferSize).complete();
+                ifile = ibuilder.complete();
             }
 
             dfile = dbuilder.bufferSize(dataBufferSize).complete();
@@ -839,6 +848,9 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
                 {
                     ByteBuffer key = ByteBufferUtil.readWithShortLength(primaryIndex);
                     /*RowIndexEntry indexEntry = */rowIndexSerializer.deserialize(primaryIndex);
+                    IndexedEntry indexedEntry = rowIndexSerializer.deserialize(primaryIndex);
+                    indexedEntry.close();
+
                     DecoratedKey decoratedKey = decorateKey(key);
                     if (first == null)
                         first = decoratedKey;
@@ -1152,26 +1164,47 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
 
     private IndexSummary buildSummaryAtLevel(int newSamplingLevel) throws IOException
     {
-        // we read the positions in a BRAF so we don't have to worry about an entry spanning a mmap boundary.
-        RandomAccessReader primaryIndex = RandomAccessReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
-        try
+        if (descriptor.version.hasBirchIndexes())
         {
-            long indexSize = primaryIndex.length();
-            try (IndexSummaryBuilder summaryBuilder = new IndexSummaryBuilder(estimatedKeys(), metadata().params.minIndexInterval, newSamplingLevel))
+            try (PageAlignedReader primaryIndex = PageAlignedReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX))))
             {
-                long indexPosition;
-                while ((indexPosition = primaryIndex.getFilePointer()) != indexSize)
+                try (IndexSummaryBuilder summaryBuilder = new IndexSummaryBuilder(estimatedKeys(), metadata().params.minIndexInterval, newSamplingLevel))
                 {
-                    summaryBuilder.maybeAddEntry(decorateKey(ByteBufferUtil.readWithShortLength(primaryIndex)), indexPosition);
-                    IndexedEntry.Serializer.skip(primaryIndex, descriptor.version);
+                    PageAlignedReader.AlignedSegmentIterator segmentIterator = primaryIndex.getSegmentIterator();
+                    while (segmentIterator.hasNext())
+                    {
+                        AlignedSegment segment = segmentIterator.next();
+                        primaryIndex.setSegment(segment.idx);
+                        summaryBuilder.maybeAddEntry(getPartitioner().decorateKey(ByteBufferUtil.readWithShortLength(primaryIndex)), segment.offset);
+                    }
+                    return summaryBuilder.build(getPartitioner());
                 }
-
-                return summaryBuilder.build(getPartitioner());
             }
         }
-        finally
+        else
         {
-            FileUtils.closeQuietly(primaryIndex);
+            // we read the positions in a BRAF so we don't have to worry about an entry spanning a mmap boundary.
+            RandomAccessReader primaryIndex = RandomAccessReader.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
+
+            try
+            {
+                long indexSize = primaryIndex.length();
+                try (IndexSummaryBuilder summaryBuilder = new IndexSummaryBuilder(estimatedKeys(), metadata().params.minIndexInterval, newSamplingLevel))
+                {
+                    long indexPosition;
+                    while ((indexPosition = primaryIndex.getFilePointer()) != indexSize)
+                    {
+                        summaryBuilder.maybeAddEntry(getPartitioner().decorateKey(ByteBufferUtil.readWithShortLength(primaryIndex)), indexPosition);
+                        IndexedEntry.Serializer.skip(primaryIndex, descriptor.version);
+                    }
+
+                    return summaryBuilder.build(getPartitioner());
+                }
+            }
+            finally
+            {
+                FileUtils.closeQuietly(primaryIndex);
+            }
         }
     }
 
@@ -1485,7 +1518,10 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
     {
         CachingParams caching = metadata().params.caching;
 
-        if (!caching.cacheKeys() || keyCache == null || keyCache.getCapacity() == 0)
+        if (!caching.cacheKeys()
+            || keyCache == null
+            || keyCache.getCapacity() == 0
+            || info instanceof BirchIndexedEntry)
             return;
 
         KeyCacheKey cacheKey = new KeyCacheKey(metadata(), descriptor, key.getKey());
@@ -1592,7 +1628,9 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
             return null;
 
         String path = null;
-        try (FileDataInput in = ifile.createReader(sampledPosition))
+        try (FileDataInput in = (descriptor.version.hasBirchIndexes())
+                                    ? ifile.createPageAlignedReader(sampledPosition)
+                                    : ifile.createReader(sampledPosition))
         {
             path = in.getPath();
             while (!in.isEOF())
@@ -1988,10 +2026,29 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
         return dfile.createReader();
     }
 
-    public RandomAccessReader openIndexReader()
+    public FileDataInput openIndexReader()
     {
         if (ifile != null)
-            return ifile.createReader();
+        {
+            try
+            {
+                if (descriptor.version.hasBirchIndexes())
+                {
+                    FileDataInput reader = ifile.createPageAlignedReader(0);
+                    ((PageAlignedReader) reader).setSegment(0);
+                    return reader;
+                }
+                else
+                {
+                    return ifile.createReader();
+                }
+            }
+            catch (IOException e)
+            {
+                throw new RuntimeException(e);
+            }
+        }
+
         return null;
     }
 

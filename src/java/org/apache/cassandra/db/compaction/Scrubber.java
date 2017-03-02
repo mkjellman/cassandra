@@ -303,7 +303,7 @@ public class Scrubber implements Closeable
     }
 
     @SuppressWarnings("resource")
-    private boolean tryAppend(DecoratedKey prevKey, DecoratedKey key, SSTableRewriter writer)
+    private boolean tryAppend(DecoratedKey prevKey, DecoratedKey key, SSTableRewriter writer) throws IOException
     {
         // OrderCheckerIterator will check, at iteration time, that the rows are in the proper order. If it detects
         // that one row is out of order, it will stop returning them. The remaining rows will be sorted and added

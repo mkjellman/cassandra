@@ -57,6 +57,8 @@ public abstract class Version
 
     public abstract boolean hasMetadataChecksum();
 
+    public abstract boolean hasBirchIndexes();
+
     public String getVersion()
     {
         return version;

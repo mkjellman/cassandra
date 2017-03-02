@@ -18,10 +18,12 @@
 package org.apache.cassandra.db.columniterator;
 
 import java.io.IOException;
-import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.db.*;
@@ -35,6 +37,8 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 
 abstract class AbstractSSTableIterator implements UnfilteredRowIterator
 {
+    private static final Logger logger = LoggerFactory.getLogger(AbstractSSTableIterator.class);
+
     protected final SSTableReader sstable;
     // We could use sstable.metadata(), but that can change during execution so it's good hygiene to grab an immutable instance
     protected final TableMetadata metadata;
@@ -310,6 +314,7 @@ abstract class AbstractSSTableIterator implements UnfilteredRowIterator
 
         protected void seekToPosition(long position) throws IOException
         {
+            logger.info("seekToPosition called for position {}", position);
             // This may be the first time we're actually looking into the file
             if (file == null)
             {
@@ -408,16 +413,15 @@ abstract class AbstractSSTableIterator implements UnfilteredRowIterator
     }
 
     // Used by indexed readers to store where they are of the index.
-    protected static class IndexState
+    protected static class IndexState implements AutoCloseable
     {
         private final Reader reader;
         private final ClusteringComparator comparator;
 
         private final IndexedEntry indexEntry;
-        private final List<IndexInfo> indexes;
         private final boolean reversed;
 
-        private int currentIndexIdx;
+        private IndexInfo currentIndexInfo;
 
         // Marks the beginning of the block corresponding to currentIndexIdx.
         private DataPosition mark;
@@ -427,38 +431,38 @@ abstract class AbstractSSTableIterator implements UnfilteredRowIterator
             this.reader = reader;
             this.comparator = comparator;
             this.indexEntry = indexEntry;
-            this.indexes = indexEntry.getAllColumnIndexes();
             this.reversed = reversed;
-            this.currentIndexIdx = reversed ? indexEntry.entryCount() : -1;
+            this.currentIndexInfo = null;
         }
 
-        public boolean isDone()
+        public void updateStateForStartingBlock(boolean onlyPeek) throws IOException
         {
-            return reversed ? currentIndexIdx < 0 : currentIndexIdx >= indexes.size();
-        }
-
-        // Sets the reader to the beginning of blockIdx.
-        public void setToBlock(int blockIdx) throws IOException
-        {
-            if (blockIdx >= 0 && blockIdx < indexes.size())
+            if (indexEntry.hasNext())
             {
-                reader.seekToPosition(columnOffset(blockIdx));
+                IndexInfo indexInfo = indexEntry.next();
+                //IndexInfo indexInfo = (onlyPeek) ? indexEntry.peek() : indexEntry.next();
+                //IndexInfo indexInfo = indexEntry.peek();
+                assert indexInfo != null; // kj remove assert
+                currentIndexInfo = indexInfo;
+                logger.info("in AbstractSSTableIterator#updateStateForStartingBlock() .. we did have next.. seeking to {} ==> indexEntry.getPosition() {} indexInfo.getOffset() {}", indexEntry.getPosition() + indexInfo.getOffset(), indexEntry.getPosition(), indexInfo.getOffset());
+                reader.seekToPosition(indexEntry.getPosition() + indexInfo.getOffset());
                 reader.deserializer.clearState();
             }
+            else
+            {
+                assert 1 == 2;
+            }
 
-            currentIndexIdx = blockIdx;
-            reader.openMarker = blockIdx > 0 ? indexes.get(blockIdx - 1).endOpenMarker : null;
+            IndexInfo currentIndexInfoPlusOne = (!indexEntry.hasNext()) ? null : indexEntry.peek();
+            //IndexInfo currentIndexInfoPlusOne = indexEntry.peek();
+            //assert currentIndexInfoPlusOne != null;
+            reader.openMarker = (currentIndexInfoPlusOne != null) ? currentIndexInfoPlusOne.endOpenMarker : null;
             mark = reader.file.mark();
-        }
-
-        private long columnOffset(int i)
-        {
-            return indexEntry.getPosition() + indexes.get(i).offset;
         }
 
         public int blocksCount()
         {
-            return indexes.size();
+            return indexEntry.entryCount();
         }
 
         // Update the block idx based on the current reader position if we're past the current block.
@@ -468,23 +472,19 @@ abstract class AbstractSSTableIterator implements UnfilteredRowIterator
         {
             assert !reversed;
 
-            // If we get here with currentBlockIdx < 0, it means setToBlock() has never been called, so it means
-            // we're about to read from the beginning of the partition, but haven't "prepared" the IndexState yet.
-            // Do so by setting us on the first block.
-            if (currentIndexIdx < 0)
-            {
-                setToBlock(0);
+            //if (!indexEntry.hasNext())
+            if (1 == 2)
                 return;
-            }
 
-            while (currentIndexIdx + 1 < indexes.size() && isPastCurrentBlock())
+            while (indexEntry.hasNext() && isPastCurrentBlock())
             {
                 reader.openMarker = currentIndex().endOpenMarker;
-                ++currentIndexIdx;
+                currentIndexInfo = indexEntry.next();
 
                 // We have to set the mark, and we have to set it at the beginning of the block. So if we're not at the beginning of the block, this forces us to a weird seek dance.
                 // This can only happen when reading old file however.
-                long startOfBlock = columnOffset(currentIndexIdx);
+                long startOfBlock = indexEntry.getPosition() + currentIndex().getOffset();
+                logger.info("kjkjkj AbstractSSTableIterator#updateBlock() startOfBlock: {} indexEntry.getPosition(): {} currentIndex().getOffset(): {}", startOfBlock, indexEntry.getPosition(), currentIndex().getOffset());
                 long currentFilePointer = reader.file.getFilePointer();
                 if (startOfBlock == currentFilePointer)
                 {
@@ -503,96 +503,27 @@ abstract class AbstractSSTableIterator implements UnfilteredRowIterator
         public boolean isPastCurrentBlock()
         {
             assert reader.deserializer != null;
-            return reader.file.bytesPastMark(mark) >= currentIndex().width;
-        }
-
-        public int currentBlockIdx()
-        {
-            return currentIndexIdx;
+            assert mark != null;
+            boolean isPastCurrentBlock = reader.file.bytesPastMark(mark) >= currentIndex().getWidth();
+            logger.info("isPastCurrentBlock() ==> {}", isPastCurrentBlock);
+            return isPastCurrentBlock;
         }
 
         public IndexInfo currentIndex()
         {
-            return index(currentIndexIdx);
-        }
-
-        public IndexInfo index(int i)
-        {
-            return indexes.get(i);
-        }
-
-        // Finds the index of the first block containing the provided bound, starting at the provided index.
-        // Will be -1 if the bound is before any block, and blocksCount() if it is after every block.
-        public int findBlockIndex(ClusteringBound bound, int fromIdx) throws IOException
-        {
-            if (bound == ClusteringBound.BOTTOM)
-                return -1;
-            if (bound == ClusteringBound.TOP)
-                return blocksCount();
-
-            return indexFor(bound, fromIdx);
-        }
-
-        public int indexFor(ClusteringPrefix name, int lastIndex) throws IOException
-        {
-            IndexInfo target = new IndexInfo(name, name, 0, 0, null);
-            /*
-            Take the example from the unit test, and say your index looks like this:
-            [0..5][10..15][20..25]
-            and you look for the slice [13..17].
-
-            When doing forward slice, we are doing a binary search comparing 13 (the start of the query)
-            to the lastName part of the index slot. You'll end up with the "first" slot, going from left to right,
-            that may contain the start.
-
-            When doing a reverse slice, we do the same thing, only using as a start column the end of the query,
-            i.e. 17 in this example, compared to the firstName part of the index slots.  bsearch will give us the
-            first slot where firstName > start ([20..25] here), so we subtract an extra one to get the slot just before.
-            */
-            int startIdx = 0;
-            int endIdx = indexEntry.entryCount() - 1;
-
-            if (reversed)
-            {
-                if (lastIndex < endIdx)
-                {
-                    endIdx = lastIndex;
-                }
-            }
-            else
-            {
-                if (lastIndex > 0)
-                {
-                    startIdx = lastIndex;
-                }
-            }
-
-            int index = binarySearch(target, comparator.indexComparator(reversed), startIdx, endIdx);
-            return (index < 0 ? -index - (reversed ? 2 : 1) : index);
-        }
-
-        private int binarySearch(IndexInfo key, Comparator<IndexInfo> c, int low, int high) throws IOException
-        {
-            while (low <= high)
-            {
-                int mid = (low + high) >>> 1;
-                IndexInfo midVal = index(mid);
-                int cmp = c.compare(midVal, key);
-
-                if (cmp < 0)
-                    low = mid + 1;
-                else if (cmp > 0)
-                    high = mid - 1;
-                else
-                    return mid;
-            }
-            return -(low + 1);
+            return currentIndexInfo;
         }
 
         @Override
         public String toString()
         {
-            return String.format("IndexState(indexSize=%d, currentBlock=%d, reversed=%b)", indexes.size(), currentIndexIdx, reversed);
+            return String.format("IndexState(indexSize=%d, currentBlock=%d, reversed=%b)", indexEntry.entryCount(), currentIndexInfo, reversed);
+        }
+
+        @Override
+        public void close() throws IOException
+        {
+            indexEntry.close();
         }
     }
 }

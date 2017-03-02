@@ -21,6 +21,7 @@
 package org.apache.cassandra.db.commitlog;
 
 import java.io.DataInput;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 
 import org.apache.cassandra.io.util.DataPosition;
@@ -67,6 +68,11 @@ public class EncryptedFileSegmentInputStream extends FileSegmentInputStream impl
     public boolean isEOF()
     {
         return totalChunkOffset + buffer.position() >= expectedLength;
+    }
+
+    public boolean isCurrentSegmentExausted() throws IOException
+    {
+        return isEOF();
     }
 
     public long bytesRemaining()

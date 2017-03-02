@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.db.view;
 
+import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -120,7 +121,7 @@ public class TableViews extends AbstractCollection<View>
      * @param writeCommitLog whether we should write the commit log for the view updates.
      * @param baseComplete time from epoch in ms that the local base mutation was (or will be) completed
      */
-    public void pushViewReplicaUpdates(PartitionUpdate update, boolean writeCommitLog, AtomicLong baseComplete)
+    public void pushViewReplicaUpdates(PartitionUpdate update, boolean writeCommitLog, AtomicLong baseComplete) throws IOException
     {
         assert update.metadata().id.equals(baseTableMetadata.id);
 

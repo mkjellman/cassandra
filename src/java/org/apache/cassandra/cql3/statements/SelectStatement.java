@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.cql3.statements;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 

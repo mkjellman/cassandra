@@ -42,6 +42,7 @@ import org.apache.cassandra.exceptions.WriteTimeoutException;
 import org.apache.cassandra.index.Index;
 import org.apache.cassandra.index.SecondaryIndexManager;
 import org.apache.cassandra.index.transactions.UpdateTransaction;
+import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.locator.AbstractReplicationStrategy;
 import org.apache.cassandra.metrics.KeyspaceMetrics;
@@ -625,7 +626,7 @@ public class Keyspace
                         JVMStabilityInspector.inspectThrowable(t);
                         logger.error(String.format("Unknown exception caught while attempting to update MaterializedView! %s",
                                                    upd.metadata().toString()), t);
-                        throw t;
+                        throw new RuntimeException(t); // kjkj todo: what exception should be thrown here to handle IOExcpetion
                     }
                 }
 

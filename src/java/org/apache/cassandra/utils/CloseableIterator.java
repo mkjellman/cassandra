@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.utils;
 
+import java.io.IOException;
 import java.util.Iterator;
 
 // so we can instantiate anonymous classes implementing both interfaces

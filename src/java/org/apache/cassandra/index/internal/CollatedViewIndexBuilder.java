@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.index.internal;
 
+import java.io.IOException;
 import java.util.Set;
 import java.util.UUID;
 
@@ -67,7 +68,14 @@ public class CollatedViewIndexBuilder extends SecondaryIndexBuilder
                 if (isStopRequested())
                     throw new CompactionInterruptedException(getCompactionInfo());
                 DecoratedKey key = iter.next();
-                cfs.indexManager.indexPartition(key, indexers, pageSize);
+                try
+                {
+                    cfs.indexManager.indexPartition(key, indexers, pageSize);
+                }
+                catch (IOException e)
+                {
+                    throw new RuntimeException(e);
+                }
             }
         }
         finally

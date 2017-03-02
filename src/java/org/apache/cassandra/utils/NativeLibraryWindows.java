@@ -82,7 +82,7 @@ public class NativeLibraryWindows implements NativeLibraryWrapper
         throw new UnsatisfiedLinkError();
     }
 
-    public int callPosixFadvise(int fd, long offset, int len, int flag) throws UnsatisfiedLinkError, RuntimeException
+    public int callPosixFadvise(int fd, long offset, long len, int flag) throws UnsatisfiedLinkError, RuntimeException
     {
         throw new UnsatisfiedLinkError();
     }

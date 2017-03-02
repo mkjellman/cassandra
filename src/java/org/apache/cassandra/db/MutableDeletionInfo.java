@@ -22,6 +22,9 @@ import java.util.Iterator;
 
 import com.google.common.base.Objects;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import org.apache.cassandra.db.rows.*;
 import org.apache.cassandra.db.rows.EncodingStats;
 import org.apache.cassandra.utils.ObjectSizes;
@@ -32,6 +35,8 @@ import org.apache.cassandra.utils.memory.AbstractAllocator;
  */
 public class MutableDeletionInfo implements DeletionInfo
 {
+    private static final Logger logger = LoggerFactory.getLogger(MutableDeletionInfo.class);
+
     private static final long EMPTY_SIZE = ObjectSizes.measure(new MutableDeletionInfo(0, 0));
 
     /**
@@ -283,12 +288,14 @@ public class MutableDeletionInfo implements DeletionInfo
 
         public void add(RangeTombstoneMarker marker)
         {
+            logger.info("MutableDeletionInfo$Builder#add called ==> marker.isClose(reversed)? {} marker.isOpen(reversed)? {}", marker.isClose(reversed), marker.isOpen(reversed));
             // We need to start by the close case in case that's a boundary
 
+            //if (marker.isClose(reversed) && openMarker != null)
             if (marker.isClose(reversed))
             {
                 DeletionTime openDeletion = openMarker.openDeletionTime(reversed);
-                assert marker.closeDeletionTime(reversed).equals(openDeletion);
+                //assert marker.closeDeletionTime(reversed).equals(openDeletion);
 
                 ClusteringBound open = openMarker.openBound(reversed);
                 ClusteringBound close = marker.closeBound(reversed);

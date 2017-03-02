@@ -17,6 +17,8 @@
  */
 package org.apache.cassandra.db.rows;
 
+import java.io.IOException;
+
 import com.google.common.collect.UnmodifiableIterator;
 
 import org.apache.cassandra.schema.TableMetadata;

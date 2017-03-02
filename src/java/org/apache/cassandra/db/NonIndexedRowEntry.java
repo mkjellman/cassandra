@@ -18,6 +18,7 @@
 
 package org.apache.cassandra.db;
 
+import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 
@@ -26,18 +27,21 @@ import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.utils.ObjectSizes;
 
 /**
- * Created by mkjellman on 1/12/17.
+ * No-Op(ish) IndexedEntry implementation for non-indexed rows,
+ * where row size is smaller than configured index minimum.
  */
 public class NonIndexedRowEntry implements IndexedEntry
 {
-    private static final long EMPTY_SIZE = ObjectSizes.measure(new NonIndexedRowEntry(0, null));
+    private static final long EMPTY_SIZE = ObjectSizes.measure(new NonIndexedRowEntry(0, 0, null));
 
     public final long position;
+    public final long headerLength;
     private final FileDataInput reader;
 
-    public NonIndexedRowEntry(long position, FileDataInput reader)
+    public NonIndexedRowEntry(long position, long headerLength, FileDataInput reader)
     {
         this.position = position;
+        this.headerLength = headerLength;
         this.reader = reader;
     }
 
@@ -62,12 +66,12 @@ public class NonIndexedRowEntry implements IndexedEntry
      */
     public long headerOffset()
     {
-        return 0;
+        return headerLength;
     }
 
     public long headerLength()
     {
-        throw new UnsupportedOperationException();
+        return headerLength;
     }
 
     public List<IndexInfo> getAllColumnIndexes()
@@ -79,6 +83,7 @@ public class NonIndexedRowEntry implements IndexedEntry
     {
         return position;
     }
+
     public int entryCount()
     {
         return 0;
@@ -109,7 +114,7 @@ public class NonIndexedRowEntry implements IndexedEntry
         throw new UnsupportedOperationException();
     }
 
-    public void startIteratorAt(ClusteringPrefix name, ClusteringComparator comparator, boolean reversed)
+    public void setIteratorBounds(ClusteringBound start, ClusteringBound end, ClusteringComparator comparator, boolean reversed) throws IOException
     {
         throw new UnsupportedOperationException();
     }
@@ -121,6 +126,11 @@ public class NonIndexedRowEntry implements IndexedEntry
 
     public boolean isReversed() {
         throw new UnsupportedOperationException();
+    }
+
+    public void setReversed(boolean reversed)
+    {
+        // no-op
     }
 
     public void close()

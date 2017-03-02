@@ -56,8 +56,8 @@ public class ClusteringComparator implements Comparator<Clusterable>
         // copy the list to ensure despatch is monomorphic
         this.clusteringTypes = ImmutableList.copyOf(clusteringTypes);
 
-        this.indexComparator = (o1, o2) -> ClusteringComparator.this.compare(o1.lastName, o2.lastName);
-        this.indexReverseComparator = (o1, o2) -> ClusteringComparator.this.compare(o1.firstName, o2.firstName);
+        this.indexComparator = (o1, o2) -> ClusteringComparator.this.compare(o1.getLastName(), o2.getLastName());
+        this.indexReverseComparator = (o1, o2) -> ClusteringComparator.this.compare(o1.getFirstName(), o2.getFirstName());
         this.reverseComparator = (c1, c2) -> ClusteringComparator.this.compare(c2, c1);
         for (AbstractType<?> type : clusteringTypes)
             type.checkComparable(); // this should already be enforced by TableMetadata.Builder.addColumn, but we check again for other constructors

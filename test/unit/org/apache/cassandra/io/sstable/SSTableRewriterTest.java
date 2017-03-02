@@ -31,6 +31,9 @@ import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.Uninterruptibles;
 import org.junit.Test;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import org.apache.cassandra.Util;
 import org.apache.cassandra.UpdateBuilder;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
@@ -67,6 +70,8 @@ import static org.junit.Assert.*;
 
 public class SSTableRewriterTest extends SSTableWriterTestBase
 {
+    private static final Logger logger = LoggerFactory.getLogger(SSTableRewriterTest.class);
+
     @Test
     public void basicTest() throws InterruptedException
     {
@@ -886,10 +891,13 @@ public class SSTableRewriterTest extends SSTableWriterTestBase
         assertEquals(1, allSSTables.size());
         final AtomicBoolean done = new AtomicBoolean(false);
         final AtomicBoolean failed = new AtomicBoolean(false);
+        logger.error("test out 1");
         Runnable r = () -> {
             while (!done.get())
             {
+                logger.error("test1");
                 Iterable<SSTableReader> sstables = cfs.getSSTables(SSTableSet.CANONICAL);
+                logger.error("kjkj ==> {}", Iterables.size(sstables));
                 if (Iterables.size(sstables) != 1)
                 {
                     failed.set(true);
@@ -906,7 +914,7 @@ public class SSTableRewriterTest extends SSTableWriterTestBase
         finally
         {
             done.set(true);
-            t.join(20);
+            t.join(2000);
         }
         assertFalse(failed.get());
 

@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.db;
 
+import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -451,7 +452,7 @@ public class Memtable implements Comparable<Memtable>
             return cfs.getDirectories();
         }
 
-        private void writeSortedContents()
+        private void writeSortedContents() throws IOException
         {
             logger.debug("Writing {}, flushed range = ({}, {}]", Memtable.this.toString(), from, to);
 
@@ -510,7 +511,7 @@ public class Memtable implements Comparable<Memtable>
         }
 
         @Override
-        public SSTableMultiWriter call()
+        public SSTableMultiWriter call() throws IOException
         {
             writeSortedContents();
             return writer;
