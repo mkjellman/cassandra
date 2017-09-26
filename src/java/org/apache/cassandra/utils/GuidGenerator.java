@@ -23,6 +23,8 @@ import java.nio.ByteBuffer;
 import java.security.SecureRandom;
 import java.util.Random;
 
+import org.apache.cassandra.dht.RandomPartitioner;
+
 public class GuidGenerator
 {
     private static final Random myRand;
@@ -87,7 +89,7 @@ public class GuidGenerator
                         .append(Long.toString(rand));
 
         String valueBeforeMD5 = sbValueBeforeMD5.toString();
-        return ByteBuffer.wrap(FBUtilities.threadLocalMD5Digest().digest(valueBeforeMD5.getBytes()));
+        return ByteBuffer.wrap(MD5Digest.threadLocalMD5Digest().digest(valueBeforeMD5.getBytes()));
     }
 
     public static ByteBuffer guidAsBytes()

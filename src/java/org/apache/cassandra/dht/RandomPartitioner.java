@@ -33,6 +33,7 @@ import org.apache.cassandra.db.marshal.PartitionerDefinedOrder;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.GuidGenerator;
+import org.apache.cassandra.utils.MD5Digest;
 import org.apache.cassandra.utils.ObjectSizes;
 import org.apache.cassandra.utils.Pair;
 
@@ -45,7 +46,7 @@ public class RandomPartitioner implements IPartitioner
     public static final BigIntegerToken MINIMUM = new BigIntegerToken("-1");
     public static final BigInteger MAXIMUM = new BigInteger("2").pow(127);
 
-    private static final int HEAP_SIZE = (int) ObjectSizes.measureDeep(new BigIntegerToken(FBUtilities.hashToBigInteger(ByteBuffer.allocate(1))));
+    private static final int HEAP_SIZE = (int) ObjectSizes.measureDeep(new BigIntegerToken(RandomPartitioner.hashToBigInteger(ByteBuffer.allocate(1))));
 
     public static final RandomPartitioner instance = new RandomPartitioner();
     public static final AbstractType<?> partitionOrdering = new PartitionerDefinedOrder(instance);
@@ -111,7 +112,7 @@ public class RandomPartitioner implements IPartitioner
 
     public BigIntegerToken getRandomToken()
     {
-        BigInteger token = FBUtilities.hashToBigInteger(GuidGenerator.guidAsBytes());
+        BigInteger token = RandomPartitioner.hashToBigInteger(GuidGenerator.guidAsBytes());
         if ( token.signum() == -1 )
             token = token.multiply(BigInteger.valueOf(-1L));
         return new BigIntegerToken(token);
@@ -119,7 +120,7 @@ public class RandomPartitioner implements IPartitioner
 
     public BigIntegerToken getRandomToken(Random random)
     {
-        BigInteger token = FBUtilities.hashToBigInteger(GuidGenerator.guidAsBytes(random, "host/127.0.0.1", 0));
+        BigInteger token = RandomPartitioner.hashToBigInteger(GuidGenerator.guidAsBytes(random, "host/127.0.0.1", 0));
         if ( token.signum() == -1 )
             token = token.multiply(BigInteger.valueOf(-1L));
         return new BigIntegerToken(token);
@@ -223,7 +224,7 @@ public class RandomPartitioner implements IPartitioner
     {
         if (key.remaining() == 0)
             return MINIMUM;
-        return new BigIntegerToken(FBUtilities.hashToBigInteger(key));
+        return new BigIntegerToken(RandomPartitioner.hashToBigInteger(key));
     }
 
     public Map<Token, Float> describeOwnership(List<Token> sortedTokens)
@@ -258,6 +259,11 @@ public class RandomPartitioner implements IPartitioner
             ownerships.put(start, x);
         }
         return ownerships;
+    }
+
+    public static BigInteger hashToBigInteger(ByteBuffer data)
+    {
+        return new BigInteger(MD5Digest.hash(data)).abs();
     }
 
     public Token getMaximumToken()

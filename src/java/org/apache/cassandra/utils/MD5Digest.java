@@ -19,7 +19,11 @@ package org.apache.cassandra.utils;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
+
+import io.netty.util.concurrent.FastThreadLocal;
 
 
 /**
@@ -32,6 +36,15 @@ import java.util.Arrays;
  */
 public class MD5Digest
 {
+    private static final FastThreadLocal<MessageDigest> localMD5Digest = new FastThreadLocal<MessageDigest>()
+    {
+        @Override
+        protected MessageDigest initialValue()
+        {
+            return newMessageDigest("MD5");
+        }
+    };
+
     public final byte[] bytes;
     private final int hashCode;
 
@@ -48,7 +61,7 @@ public class MD5Digest
 
     public static MD5Digest compute(byte[] toHash)
     {
-        return new MD5Digest(FBUtilities.threadLocalMD5Digest().digest(toHash));
+        return new MD5Digest(MD5Digest.threadLocalMD5Digest().digest(toHash));
     }
 
     public static MD5Digest compute(String toHash)
@@ -81,5 +94,38 @@ public class MD5Digest
     public String toString()
     {
         return Hex.bytesToHex(bytes);
+    }
+
+    public static MessageDigest threadLocalMD5Digest()
+    {
+        MessageDigest md = localMD5Digest.get();
+        md.reset();
+        return md;
+    }
+
+    public static MessageDigest newMessageDigest(String algorithm)
+    {
+        try
+        {
+            return MessageDigest.getInstance(algorithm);
+        }
+        catch (NoSuchAlgorithmException nsae)
+        {
+            throw new RuntimeException("the requested digest algorithm (" + algorithm + ") is not available", nsae);
+        }
+    }
+
+    public static byte[] hash(ByteBuffer... data)
+    {
+        MessageDigest messageDigest = localMD5Digest.get();
+        for (ByteBuffer block : data)
+        {
+            if (block.hasArray())
+                messageDigest.update(block.array(), block.arrayOffset() + block.position(), block.remaining());
+            else
+                messageDigest.update(block.duplicate());
+        }
+
+        return messageDigest.digest();
     }
 }

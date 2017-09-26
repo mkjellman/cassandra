@@ -18,15 +18,20 @@
 package org.apache.cassandra.repair;
 
 import java.net.InetAddress;
-import java.security.MessageDigest;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.hash.Funnel;
+import com.google.common.hash.HashCode;
+import com.google.common.hash.Hasher;
+import com.google.common.hash.Hashing;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.db.ColumnFamilyStore;
@@ -185,54 +190,99 @@ public class Validator implements Runnable
         return range.contains(t);
     }
 
-    static class CountingDigest extends MessageDigest
+    static class CountingHasher implements Hasher
     {
         private long count;
-        private MessageDigest underlying;
+        private Hasher underlying;
 
-        public CountingDigest(MessageDigest underlying)
+        public CountingHasher(Hasher underlying)
         {
-            super(underlying.getAlgorithm());
             this.underlying = underlying;
         }
 
-        @Override
-        protected void engineUpdate(byte input)
+        public Hasher putByte(byte b)
         {
-            underlying.update(input);
             count += 1;
+            return underlying.putByte(b);
         }
 
-        @Override
-        protected void engineUpdate(byte[] input, int offset, int len)
+        public Hasher putBytes(byte[] bytes)
         {
-            underlying.update(input, offset, len);
-            count += len;
+            count += bytes.length;
+            return underlying.putBytes(bytes);
         }
 
-        @Override
-        protected byte[] engineDigest()
+        public Hasher putBytes(byte[] bytes, int offset, int length)
         {
-            return underlying.digest();
+            count += length;
+            return underlying.putBytes(bytes, offset, length);
         }
 
-        @Override
-        protected void engineReset()
+        public Hasher putShort(short i)
         {
-            underlying.reset();
+            return underlying.putShort(i);
         }
 
+        public Hasher putInt(int i)
+        {
+            return underlying.putInt(i);
+        }
+
+        public Hasher putLong(long l)
+        {
+            return underlying.putLong(l);
+        }
+
+        public Hasher putFloat(float v)
+        {
+            return underlying.putFloat(v);
+        }
+
+        public Hasher putDouble(double v)
+        {
+            return underlying.putDouble(v);
+        }
+
+        public Hasher putBoolean(boolean b)
+        {
+            return underlying.putBoolean(b);
+        }
+
+        public Hasher putChar(char c)
+        {
+            return underlying.putChar(c);
+        }
+
+        public Hasher putUnencodedChars(CharSequence charSequence)
+        {
+            return underlying.putUnencodedChars(charSequence);
+        }
+
+        public Hasher putString(CharSequence charSequence, Charset charset)
+        {
+            return underlying.putString(charSequence, charset);
+        }
+
+        public <T> Hasher putObject(T t, Funnel<? super T> funnel)
+        {
+            return underlying.putObject(t, funnel);
+        }
+
+        public HashCode hash()
+        {
+            return underlying.hash();
+        }
     }
 
     private MerkleTree.RowHash rowHash(UnfilteredRowIterator partition)
     {
         validated++;
         // MerkleTree uses XOR internally, so we want lots of output bits here
-        CountingDigest digest = new CountingDigest(FBUtilities.newMessageDigest("SHA-256"));
-        UnfilteredRowIterators.digest(partition, digest, MessagingService.current_version);
+        CountingHasher hasher = new CountingHasher(Hashing.sha256().newHasher());
+        UnfilteredRowIterators.digest(partition, hasher, MessagingService.current_version);
         // only return new hash for merkle tree in case digest was updated - see CASSANDRA-8979
-        return digest.count > 0
-             ? new MerkleTree.RowHash(partition.partitionKey().getToken(), digest.digest(), digest.count)
+        return hasher.count > 0
+             ? new MerkleTree.RowHash(partition.partitionKey().getToken(), hasher.hash().asBytes(), hasher.count)
              : null;
     }
 
