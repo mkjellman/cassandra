@@ -19,7 +19,6 @@ package org.apache.cassandra.cql3;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -27,6 +26,8 @@ import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Objects;
+
+import com.google.common.hash.Hasher;
 
 import io.netty.buffer.ByteBuf;
 import org.apache.cassandra.cql3.statements.ModificationStatement;
@@ -39,7 +40,7 @@ import org.apache.cassandra.transport.CBUtil;
 import org.apache.cassandra.transport.DataType;
 import org.apache.cassandra.transport.ProtocolVersion;
 import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.utils.FBUtilities;
+import org.apache.cassandra.utils.HashingUtils;
 import org.apache.cassandra.utils.MD5Digest;
 
 public class ResultSet
@@ -697,22 +698,22 @@ public class ResultSet
         }
     }
 
-    public static MD5Digest computeResultMetadataId(List<ColumnSpecification> columnSpecifications)
+    static MD5Digest computeResultMetadataId(List<ColumnSpecification> columnSpecifications)
     {
-        MessageDigest md = FBUtilities.threadLocalMD5Digest();
+        Hasher hasher = HashingUtils.CURRENT_HASH_FUNCTION.newHasher();
 
         if (columnSpecifications != null)
         {
             for (ColumnSpecification cs : columnSpecifications)
             {
-                md.update(cs.name.bytes.duplicate());
-                md.update((byte) 0);
-                md.update(cs.type.toString().getBytes(StandardCharsets.UTF_8));
-                md.update((byte) 0);
-                md.update((byte) 0);
+                HashingUtils.updateBytes(hasher, cs.name.bytes.duplicate());
+                hasher.putByte((byte) 0);
+                hasher.putBytes(cs.type.toString().getBytes(StandardCharsets.UTF_8));
+                hasher.putByte((byte) 0);
+                hasher.putByte((byte) 0);
             }
         }
 
-        return MD5Digest.wrap(md.digest());
+        return MD5Digest.wrap(hasher.hash().asBytes());
     }
 }
