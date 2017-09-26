@@ -24,11 +24,13 @@ import java.util.Map;
 
 import io.netty.buffer.ByteBuf;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.service.QueryState;
-import org.apache.cassandra.transport.FrameCompressor;
 import org.apache.cassandra.transport.Message;
 import org.apache.cassandra.transport.ProtocolVersion;
+import org.apache.cassandra.transport.frame.LegacySnappyFrameCompressor;
+import org.apache.cassandra.utils.ChecksumType;
 
 /**
  * Message to indicate that the server is ready to receive requests.
@@ -63,8 +65,14 @@ public class OptionsMessage extends Message.Request
         cqlVersions.add(QueryProcessor.CQL_VERSION.toString());
 
         List<String> compressions = new ArrayList<String>();
-        if (FrameCompressor.SnappyCompressor.instance != null)
-            compressions.add("snappy");
+        if (!connection.getVersion().supportsChecksums())
+        {
+            // we only support snappy compression if the library links successfully
+            // and the client is connecting with a legacy protocol version prior to
+            // adding checksum support -- of which there is no snappy implementation.
+            if (LegacySnappyFrameCompressor.instance != null)
+                compressions.add("snappy");
+        }
         // LZ4 is always available since worst case scenario it default to a pure JAVA implem.
         compressions.add("lz4");
 
@@ -72,6 +80,19 @@ public class OptionsMessage extends Message.Request
         supported.put(StartupMessage.CQL_VERSION, cqlVersions);
         supported.put(StartupMessage.COMPRESSION, compressions);
         supported.put(StartupMessage.PROTOCOL_VERSIONS, ProtocolVersion.supportedVersions());
+
+        if (connection.getVersion().supportsChecksums())
+        {
+            List<String> checksumImpls = new ArrayList<>();
+            if (DatabaseDescriptor.isNativeTransportChecksummingEnabled())
+            {
+                for (ChecksumType checksumType : ChecksumType.values())
+                {
+                    checksumImpls.add(checksumType.toString());
+                }
+            }
+            supported.put(StartupMessage.CHECKSUM, checksumImpls);
+        }
 
         return new SupportedMessage(supported);
     }

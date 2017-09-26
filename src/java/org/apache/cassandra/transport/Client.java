@@ -32,7 +32,13 @@ import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.db.marshal.UTF8Type;
+import org.apache.cassandra.transport.frame.ChecksummingFrameCompressor;
+import org.apache.cassandra.transport.frame.LegacyLZ4FrameCompressor;
+import org.apache.cassandra.transport.frame.LegacySnappyFrameCompressor;
+import org.apache.cassandra.transport.frame.checksum.ChecksummingTransformer;
+import org.apache.cassandra.transport.frame.compress.LZ4Compressor;
 import org.apache.cassandra.transport.messages.*;
+import org.apache.cassandra.utils.ChecksumType;
 import org.apache.cassandra.utils.Hex;
 import org.apache.cassandra.utils.JVMStabilityInspector;
 import org.apache.cassandra.utils.MD5Digest;
@@ -45,7 +51,7 @@ public class Client extends SimpleClient
 
     public Client(String host, int port, ProtocolVersion version, ClientEncryptionOptions encryptionOptions)
     {
-        super(host, port, version, encryptionOptions);
+        super(host, port, version, version.isBeta(), encryptionOptions);
         setEventHandler(eventHandler);
     }
 
@@ -108,11 +114,31 @@ public class Client extends SimpleClient
             options.put(StartupMessage.CQL_VERSION, "3.0.0");
             while (iter.hasNext())
             {
-               String next = iter.next();
-               if (next.toLowerCase().equals("snappy"))
+               String next = iter.next().toLowerCase();
+               switch (next)
                {
-                   options.put(StartupMessage.COMPRESSION, "snappy");
-                   connection.setCompressor(FrameCompressor.SnappyCompressor.instance);
+                   case "snappy": {
+                       options.put(StartupMessage.COMPRESSION, "snappy");
+                       connection.setCompressor(LegacySnappyFrameCompressor.instance);
+                       break;
+                   }
+                   case "lz4": {
+                       options.put(StartupMessage.COMPRESSION, "lz4");
+                       if (version.supportsChecksums())
+                       {
+                           ChecksumType checksumType = ChecksumType.CRC32;
+                           options.put(StartupMessage.CHECKSUM, checksumType.toString());
+
+                           ChecksummingFrameCompressor lz4ChecksummingFrameCompressor = new ChecksummingFrameCompressor(new ChecksummingTransformer(ChecksummingTransformer.DEFAULT_BLOCK_SIZE,
+                                                                                                                                                    new LZ4Compressor(),
+                                                                                                                                                    checksumType));
+                           connection.setCompressor(lz4ChecksummingFrameCompressor);
+                       }
+                       else
+                       {
+                           connection.setCompressor(LegacyLZ4FrameCompressor.instance);
+                       }
+                   }
                }
             }
             return new StartupMessage(options);

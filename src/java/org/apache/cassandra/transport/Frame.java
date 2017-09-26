@@ -32,6 +32,7 @@ import io.netty.handler.codec.MessageToMessageEncoder;
 import io.netty.util.Attribute;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.exceptions.InvalidRequestException;
+import org.apache.cassandra.transport.frame.FrameCompressor;
 import org.apache.cassandra.transport.messages.ErrorMessage;
 
 public class Frame
@@ -102,7 +103,8 @@ public class Frame
             TRACING,
             CUSTOM_PAYLOAD,
             WARNING,
-            USE_BETA;
+            USE_BETA,
+            CHECKSUMMED;
 
             private static final Flag[] ALL_VALUES = values();
 
@@ -308,20 +310,22 @@ public class Frame
         {
             Connection connection = ctx.channel().attr(Connection.attributeKey).get();
 
-            if (!frame.header.flags.contains(Header.Flag.COMPRESSED) || connection == null)
+            if (connection == null)
             {
                 results.add(frame);
-                return;
             }
-
-            FrameCompressor compressor = connection.getCompressor();
-            if (compressor == null)
+            else
             {
-                results.add(frame);
-                return;
+                FrameCompressor compressor = connection.getCompressor();
+                if (compressor != null)
+                {
+                    results.add(compressor.decompress(frame));
+                }
+                else
+                {
+                    results.add(frame);
+                }
             }
-
-            results.add(compressor.decompress(frame));
         }
     }
 
@@ -341,14 +345,19 @@ public class Frame
             }
 
             FrameCompressor compressor = connection.getCompressor();
-            if (compressor == null)
+            if (compressor != null)
+            {
+                frame.header.flags.add(Header.Flag.COMPRESSED);
+                if (compressor.isChecksumming())
+                {
+                    frame.header.flags.add(Header.Flag.CHECKSUMMED);
+                }
+                results.add(compressor.compress(frame));
+            }
+            else
             {
                 results.add(frame);
-                return;
             }
-
-            frame.header.flags.add(Header.Flag.COMPRESSED);
-            results.add(compressor.compress(frame));
         }
     }
 }

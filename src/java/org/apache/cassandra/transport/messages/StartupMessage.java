@@ -19,13 +19,23 @@ package org.apache.cassandra.transport.messages;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
+
+import org.apache.commons.lang3.EnumUtils;
 
 import io.netty.buffer.ByteBuf;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.*;
+import org.apache.cassandra.transport.frame.ChecksummingFrameCompressor;
+import org.apache.cassandra.transport.frame.LegacyLZ4FrameCompressor;
+import org.apache.cassandra.transport.frame.LegacySnappyFrameCompressor;
+import org.apache.cassandra.transport.frame.checksum.ChecksummingTransformer;
+import org.apache.cassandra.transport.frame.compress.LZ4Compressor;
+import org.apache.cassandra.transport.frame.compress.NoOpCompressor;
 import org.apache.cassandra.utils.CassandraVersion;
+import org.apache.cassandra.utils.ChecksumType;
 
 /**
  * The initial message of the protocol.
@@ -36,6 +46,7 @@ public class StartupMessage extends Message.Request
     public static final String CQL_VERSION = "CQL_VERSION";
     public static final String COMPRESSION = "COMPRESSION";
     public static final String PROTOCOL_VERSIONS = "PROTOCOL_VERSIONS";
+    public static final String CHECKSUM = "CHECKSUM";
 
     public static final Message.Codec<StartupMessage> codec = new Message.Codec<StartupMessage>()
     {
@@ -79,22 +90,67 @@ public class StartupMessage extends Message.Request
             throw new ProtocolException(e.getMessage());
         }
 
-        if (options.containsKey(COMPRESSION))
+        boolean useCompression = options.containsKey(COMPRESSION);
+        boolean supportsChecksums = connection.getVersion().supportsChecksums();
+
+        Optional<ChecksumType> checksumType = (supportsChecksums) ? getChecksumType() : Optional.empty();
+
+        if (useCompression)
         {
             String compression = options.get(COMPRESSION).toLowerCase();
-            if (compression.equals("snappy"))
+            switch (compression)
             {
-                if (FrameCompressor.SnappyCompressor.instance == null)
-                    throw new ProtocolException("This instance does not support Snappy compression");
-                connection.setCompressor(FrameCompressor.SnappyCompressor.instance);
+                case "snappy":
+                {
+                    // no reason
+                    if (!supportsChecksums)
+                    {
+                        if (LegacySnappyFrameCompressor.instance == null)
+                            throw new ProtocolException("This instance does not support Snappy compression");
+                        connection.setCompressor(LegacySnappyFrameCompressor.instance);
+                        break;
+                    }
+                    else
+                    {
+                        throw new ProtocolException("Snappy compression is no longer supported. " +
+                                                    "Please switch to the LZ4 compressor or another " +
+                                                    "supported compression implementation.");
+                    }
+                }
+                case "lz4":
+                {
+                    if (supportsChecksums && checksumType.isPresent())
+                    {
+                        ChecksummingFrameCompressor lz4ChecksummingFrameCompressor = new ChecksummingFrameCompressor(new ChecksummingTransformer(ChecksummingTransformer.DEFAULT_BLOCK_SIZE,
+                                                                                                                                                 new LZ4Compressor(),
+                                                                                                                                                 checksumType.get()));
+                        connection.setCompressor(lz4ChecksummingFrameCompressor);
+                    }
+                    else
+                    {
+                        connection.setCompressor(LegacyLZ4FrameCompressor.instance);
+                    }
+                    break;
+                }
+                default: throw new ProtocolException(String.format("Unknown compression algorithm: %s", compression));
             }
-            else if (compression.equals("lz4"))
+        }
+        else
+        {
+            if (supportsChecksums && checksumType.isPresent())
             {
-                connection.setCompressor(FrameCompressor.LZ4Compressor.instance);
+                ChecksummingFrameCompressor checksumOnlyFrameCompressor = new ChecksummingFrameCompressor(new ChecksummingTransformer(ChecksummingTransformer.DEFAULT_BLOCK_SIZE,
+                                                                                                                                      new NoOpCompressor(),
+                                                                                                                                      checksumType.get()));
+                connection.setCompressor(checksumOnlyFrameCompressor);
             }
-            else
+
+            if (checksumType.isPresent() && !DatabaseDescriptor.isNativeTransportChecksummingEnabled())
             {
-                throw new ProtocolException(String.format("Unknown compression algorithm: %s", compression));
+                throw new ProtocolException("This instance does not support checksummed native transport requests. " +
+                                            "Either enable checksumming by setting YAML property " +
+                                            "enable_checksumming_in_native_transport to true or disable checksums " +
+                                            "on the connection in your client");
             }
         }
 
@@ -116,5 +172,24 @@ public class StartupMessage extends Message.Request
     public String toString()
     {
         return "STARTUP " + options;
+    }
+
+    private Optional<ChecksumType> getChecksumType() throws ProtocolException
+    {
+        Optional<ChecksumType> checksumType;
+        if (options.containsKey(CHECKSUM))
+        {
+            checksumType = Optional.ofNullable(EnumUtils.getEnum(ChecksumType.class, options.get(CHECKSUM)));
+            if (!checksumType.isPresent())
+            {
+                throw new ProtocolException(String.format("Requsted checksum type %s is not known or supported by " +
+                                                          "this version of Cassandra", options.get(CHECKSUM)));
+            }
+        }
+        else
+        {
+            checksumType = Optional.empty();
+        }
+        return checksumType;
     }
 }

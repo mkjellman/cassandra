@@ -346,6 +346,8 @@ public class Config
     public RepairCommandPoolFullStrategy repair_command_pool_full_strategy = RepairCommandPoolFullStrategy.queue;
     public int repair_command_pool_size = concurrent_validations;
 
+    public boolean enable_checksumming_in_native_transport = true;
+    
     /**
      * @deprecated migrate to {@link DatabaseDescriptor#isClientInitialized()}
      */

@@ -2415,4 +2415,8 @@ public class DatabaseDescriptor
     {
         return conf.repair_command_pool_full_strategy;
     }
+
+    public static boolean isNativeTransportChecksummingEnabled() {
+        return conf.enable_checksumming_in_native_transport;
+    }
 }
