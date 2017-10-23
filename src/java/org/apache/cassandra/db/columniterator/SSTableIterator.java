@@ -25,7 +25,6 @@ import org.apache.cassandra.db.filter.ColumnFilter;
 import org.apache.cassandra.db.rows.*;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.util.FileDataInput;
-import org.apache.cassandra.io.util.FileHandle;
 
 /**
  *  A Cell Iterator over SSTable
@@ -42,10 +41,9 @@ public class SSTableIterator extends AbstractSSTableIterator
                            DecoratedKey key,
                            RowIndexEntry indexEntry,
                            Slices slices,
-                           ColumnFilter columns,
-                           FileHandle ifile)
+                           ColumnFilter columns)
     {
-        super(sstable, file, key, indexEntry, slices, columns, ifile);
+        super(sstable, file, key, indexEntry, slices, columns);
     }
 
     protected Reader createReaderInternal(RowIndexEntry indexEntry, FileDataInput file, boolean shouldCloseFile)
@@ -213,15 +211,8 @@ public class SSTableIterator extends AbstractSSTableIterator
         private ForwardIndexedReader(RowIndexEntry indexEntry, FileDataInput file, boolean shouldCloseFile)
         {
             super(file, shouldCloseFile);
-            this.indexState = new IndexState(this, metadata.comparator, indexEntry, false, ifile);
+            this.indexState = new IndexState(this, metadata.comparator, indexEntry, false);
             this.lastBlockIdx = indexState.blocksCount(); // if we never call setForSlice, that's where we want to stop
-        }
-
-        @Override
-        public void close() throws IOException
-        {
-            super.close();
-            this.indexState.close();
         }
 
         @Override

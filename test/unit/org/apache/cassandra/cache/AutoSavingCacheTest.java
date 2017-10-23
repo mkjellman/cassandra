@@ -19,7 +19,6 @@ package org.apache.cassandra.cache;
 
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.schema.ColumnMetadata;
-import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.marshal.AsciiType;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
@@ -51,23 +50,9 @@ public class AutoSavingCacheTest
     }
 
     @Test
-    public void testSerializeAndLoadKeyCache0kB() throws Exception
-    {
-        DatabaseDescriptor.setColumnIndexCacheSize(0);
-        doTestSerializeAndLoadKeyCache();
-    }
-
-    @Test
     public void testSerializeAndLoadKeyCache() throws Exception
     {
-        DatabaseDescriptor.setColumnIndexCacheSize(8);
-        doTestSerializeAndLoadKeyCache();
-    }
-
-    private static void doTestSerializeAndLoadKeyCache() throws Exception
-    {
         ColumnFamilyStore cfs = Keyspace.open(KEYSPACE1).getColumnFamilyStore(CF_STANDARD1);
-        cfs.truncateBlocking();
         for (int i = 0; i < 2; i++)
         {
             ColumnMetadata colDef = ColumnMetadata.regularColumn(cfs.metadata(), ByteBufferUtil.bytes("col1"), AsciiType.instance);

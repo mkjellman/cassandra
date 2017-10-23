@@ -145,7 +145,7 @@ public class Verifier implements Closeable
         {
             ByteBuffer nextIndexKey = ByteBufferUtil.readWithShortLength(indexFile);
             {
-                long firstRowPositionFromIndex = rowIndexEntrySerializer.deserializePositionAndSkip(indexFile);
+                long firstRowPositionFromIndex = rowIndexEntrySerializer.deserialize(indexFile).position;
                 if (firstRowPositionFromIndex != 0)
                     markAndThrow();
             }
@@ -179,7 +179,7 @@ public class Verifier implements Closeable
                     nextIndexKey = indexFile.isEOF() ? null : ByteBufferUtil.readWithShortLength(indexFile);
                     nextRowPositionFromIndex = indexFile.isEOF()
                                              ? dataFile.length()
-                                             : rowIndexEntrySerializer.deserializePositionAndSkip(indexFile);
+                                             : rowIndexEntrySerializer.deserialize(indexFile).position;
                 }
                 catch (Throwable th)
                 {

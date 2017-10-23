@@ -161,15 +161,6 @@ public abstract class ClusteringBoundOrBoundary extends AbstractBufferClustering
             return deserializeValues(in, kind, version, types);
         }
 
-        public void skipValues(DataInputPlus in, Kind kind, int version, List<AbstractType<?>> types) throws IOException
-        {
-            int size = in.readUnsignedShort();
-            if (size == 0)
-                return;
-
-            ClusteringPrefix.serializer.skipValuesWithoutSize(in, size, version, types);
-        }
-
         public ClusteringBoundOrBoundary deserializeValues(DataInputPlus in, Kind kind, int version, List<AbstractType<?>> types) throws IOException
         {
             int size = in.readUnsignedShort();

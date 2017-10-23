@@ -525,7 +525,7 @@ public class UnfilteredSerializer
                 }
                 else
                 {
-                    Clustering.serializer.skip(in, helper.version, header.clusteringTypes());
+                    Clustering.serializer.deserialize(in, helper.version, header.clusteringTypes());
                     skipRowBody(in);
                     // Continue with next item.
                 }

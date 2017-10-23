@@ -26,7 +26,6 @@ import org.apache.cassandra.db.partitions.ImmutableBTreePartition;
 import org.apache.cassandra.db.rows.*;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.util.FileDataInput;
-import org.apache.cassandra.io.util.FileHandle;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.utils.AbstractIterator;
 import org.apache.cassandra.utils.btree.BTree;
@@ -46,10 +45,9 @@ public class SSTableReversedIterator extends AbstractSSTableIterator
                                    DecoratedKey key,
                                    RowIndexEntry indexEntry,
                                    Slices slices,
-                                   ColumnFilter columns,
-                                   FileHandle ifile)
+                                   ColumnFilter columns)
     {
-        super(sstable, file, key, indexEntry, slices, columns, ifile);
+        super(sstable, file, key, indexEntry, slices, columns);
     }
 
     protected Reader createReaderInternal(RowIndexEntry indexEntry, FileDataInput file, boolean shouldCloseFile)
@@ -165,7 +163,7 @@ public class SSTableReversedIterator extends AbstractSSTableIterator
             return iterator.next();
         }
 
-        protected boolean stopReadingDisk() throws IOException
+        protected boolean stopReadingDisk()
         {
             return false;
         }
@@ -264,14 +262,13 @@ public class SSTableReversedIterator extends AbstractSSTableIterator
         private ReverseIndexedReader(RowIndexEntry indexEntry, FileDataInput file, boolean shouldCloseFile)
         {
             super(file, shouldCloseFile);
-            this.indexState = new IndexState(this, metadata.comparator, indexEntry, true, ifile);
+            this.indexState = new IndexState(this, metadata.comparator, indexEntry, true);
         }
 
         @Override
         public void close() throws IOException
         {
             super.close();
-            this.indexState.close();
         }
 
         @Override
@@ -361,7 +358,7 @@ public class SSTableReversedIterator extends AbstractSSTableIterator
         }
 
         @Override
-        protected boolean stopReadingDisk() throws IOException
+        protected boolean stopReadingDisk()
         {
             return indexState.isPastCurrentBlock();
         }
