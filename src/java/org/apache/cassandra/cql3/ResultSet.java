@@ -19,6 +19,7 @@ package org.apache.cassandra.cql3;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -27,10 +28,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Objects;
 
-import com.google.common.hash.Hasher;
-
 import io.netty.buffer.ByteBuf;
-import org.apache.cassandra.cql3.statements.ModificationStatement;
 import org.apache.cassandra.cql3.statements.ParsedStatement;
 import org.apache.cassandra.cql3.statements.SelectStatement;
 import org.apache.cassandra.db.marshal.AbstractType;
@@ -40,7 +38,6 @@ import org.apache.cassandra.transport.CBUtil;
 import org.apache.cassandra.transport.DataType;
 import org.apache.cassandra.transport.ProtocolVersion;
 import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.utils.HashingUtils;
 import org.apache.cassandra.utils.MD5Digest;
 
 public class ResultSet
@@ -700,20 +697,25 @@ public class ResultSet
 
     static MD5Digest computeResultMetadataId(List<ColumnSpecification> columnSpecifications)
     {
-        Hasher hasher = HashingUtils.CURRENT_HASH_FUNCTION.newHasher();
+        // still using the MD5 MessageDigest thread local here instead of a HashingUtils/Guava
+        // Hasher, as ResultSet will need to be changed alongside other usages of MD5
+        // in the native transport/protocol and it seems to make more sense to do that
+        // then than as part of the Guava Hasher refactor which is focused on non-client
+        // protocol digests
+        MessageDigest md = MD5Digest.threadLocalMD5Digest();
 
         if (columnSpecifications != null)
         {
             for (ColumnSpecification cs : columnSpecifications)
             {
-                HashingUtils.updateBytes(hasher, cs.name.bytes.duplicate());
-                hasher.putByte((byte) 0);
-                hasher.putBytes(cs.type.toString().getBytes(StandardCharsets.UTF_8));
-                hasher.putByte((byte) 0);
-                hasher.putByte((byte) 0);
+                md.update(cs.name.bytes.duplicate());
+                md.update((byte) 0);
+                md.update(cs.type.toString().getBytes(StandardCharsets.UTF_8));
+                md.update((byte) 0);
+                md.update((byte) 0);
             }
         }
 
-        return MD5Digest.wrap(hasher.hash().asBytes());
+        return MD5Digest.wrap(md.digest());
     }
 }

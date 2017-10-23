@@ -33,8 +33,9 @@ import java.util.Arrays;
 public class MD5Digest
 {
     /**
-     * In the interest not breaking things, we're conciously keeping this single remaining instance
-     * of MessageDigest around for usage by GuidGenerator (which is only ever used by RandomPartitioner).
+     * In the interest not breaking things, we're consciously keeping this single remaining instance
+     * of MessageDigest around for usage by GuidGenerator (which is only ever used by RandomPartitioner)
+     * and some client native transport methods, where we're tied to the usage of MD5 in the protocol.
      * As RandomPartitioner will always be MD5 and cannot be changed, we can switch over all our
      * other digest usage to Guava's Hasher to make switching the hashing function used during message
      * digests etc possible, but not regress on performance or bugs in RandomPartitioner's usage of
