@@ -134,6 +134,7 @@ public class PageAlignedReader extends RebufferingInputStream implements FileDat
     private void setup() throws IOException
     {
         seekInternal(length() - Long.BYTES);
+        logger.debug("after first seekInternal in setup()... seek was to {}... we are actually at {} filePointer: {}", length() - Long.BYTES, current(), getFilePointer());
         this.serializedDescriptorsStartingOffset = readLong();
         seekInternal(serializedDescriptorsStartingOffset);
         this.totalSegments = readInt();
@@ -141,6 +142,7 @@ public class PageAlignedReader extends RebufferingInputStream implements FileDat
         this.maxOffset = readLong();
         this.pageAlignedChunkSize = readInt();
 
+        logger.debug("setup(): serializedDescriptorsStartingOffset: {} totalSegments:{} relativeOffsetToSerializedAlignedSegmentObjects: {} maxOffset: {} pageAlignedChunkSize: {}", serializedDescriptorsStartingOffset, totalSegments, relativeOffsetToSerializedAlignedSegmentObjects, maxOffset, pageAlignedChunkSize);
         // todo kjkj fuck: commenting out for now as not sure how this works with the Chunk stuff
         //raf.updateBufferSize(pageAlignedChunkSize);
 
@@ -204,6 +206,7 @@ public class PageAlignedReader extends RebufferingInputStream implements FileDat
         }
         else
         {
+            logger.debug("before seekInternal: serializedDescriptorsStartingOffset: {} relativeOffsetToSerializedAlignedSegmentObjects: {} relativeOffsetForThisSegmentsVariableLengthComponents: {}", serializedDescriptorsStartingOffset, relativeOffsetToSerializedAlignedSegmentObjects, relativeOffsetForThisSegmentsVariableLengthComponents);
             seekInternal(serializedDescriptorsStartingOffset
                      + relativeOffsetToSerializedAlignedSegmentObjects
                      + relativeOffsetForThisSegmentsVariableLengthComponents);
@@ -383,13 +386,13 @@ public class PageAlignedReader extends RebufferingInputStream implements FileDat
         boolean isOutOfSubSegments = currentSubSegmentIdx + 1 >= totalSubSegmentsInCurrentSegment;
         boolean currentSubSegmentExausted = getOffset() >= currentSubSegmentUsableEndOffset;
         boolean tmp = isOutOfSegments && isOutOfSubSegments && currentSubSegmentExausted;
-        logger.info("isEOF() called... isEOF()? {}", tmp);
+        logger.debug("isEOF() called... isEOF()? {}", tmp);
         return tmp;
     }
 
     public boolean isCurrentSegmentExausted() throws IOException
     {
-        logger.info("isCurrentSegmentExausted() called... getOffset() {} >= currentSegmentUsableEndOffset {}", getOffset(), currentSegmentUsableEndOffset);
+        logger.debug("isCurrentSegmentExausted() called... getOffset() {} >= currentSegmentUsableEndOffset {}", getOffset(), currentSegmentUsableEndOffset);
         return getOffset() >= currentSegmentUsableEndOffset;
     }
 
@@ -444,7 +447,7 @@ public class PageAlignedReader extends RebufferingInputStream implements FileDat
      * Every effort should be made to avoid this check as it's obviously not optimal, but if
      * PageAlignedReader instances are reused, it might be required that we use it to re-prepare
      * the PageAlignedReader instance. A good example of where this is required is in
-     * {@link SSTableScanner#seekToCurrentRangeStart()}
+     * {@link org.apache.cassandra.io.sstable.format.big.BigTableScanner#seekToCurrentRangeStart()}
      *
      * @param pos absolute position in the data file to find the segment and subsegment bounds for
      * @throws IOException thrown if an exception is encountered while mapping the found region
@@ -526,6 +529,7 @@ public class PageAlignedReader extends RebufferingInputStream implements FileDat
 
     private void seekInternal(long pos) throws IOException
     {
+        logger.debug("seekInternal called for pos: {} getFilePointer: {} length: {}", pos, getFilePointer(), length());
         reBufferAt(pos);
         //seek(pos);
     }
@@ -533,7 +537,7 @@ public class PageAlignedReader extends RebufferingInputStream implements FileDat
     @Override
     public void seek(long newPosition) throws IOException
     {
-        logger.info("PageAlignedReader#seek() {} currentSubSegmentOffset: {} currentSubSegmentAlignedEndOffset: {}", newPosition, currentSubSegmentOffset, currentSubSegmentAlignedEndOffset);
+        logger.debug("PageAlignedReader#seek() {} currentSubSegmentOffset: {} currentSubSegmentAlignedEndOffset: {}", newPosition, currentSubSegmentOffset, currentSubSegmentAlignedEndOffset);
         assert newPosition >= 0 && newPosition >= currentSubSegmentOffset && newPosition <= currentSubSegmentAlignedEndOffset;
 
         if (newPosition < 0)
@@ -642,7 +646,8 @@ public class PageAlignedReader extends RebufferingInputStream implements FileDat
         byte[] buf = new byte[length];
         try
         {
-            read(buf);
+            int bytesRead = read(buf);
+            assert bytesRead == length;
         }
         catch (BufferUnderflowException | BufferOverflowException e)
         {
@@ -660,7 +665,7 @@ public class PageAlignedReader extends RebufferingInputStream implements FileDat
     @Override
     public void close() throws IOException
     {
-        logger.info("PageAligednReader#close()... isClosed? {}", isClosed);
+        logger.debug("PageAligednReader#close()... isClosed? {}", isClosed);
         if (isClosed)
             return;
 

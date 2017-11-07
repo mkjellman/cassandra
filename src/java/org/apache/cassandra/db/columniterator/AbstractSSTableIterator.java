@@ -314,7 +314,7 @@ abstract class AbstractSSTableIterator implements UnfilteredRowIterator
 
         protected void seekToPosition(long position) throws IOException
         {
-            logger.info("seekToPosition called for position {}", position);
+            logger.debug("seekToPosition called for position {}", position);
             // This may be the first time we're actually looking into the file
             if (file == null)
             {
@@ -444,7 +444,7 @@ abstract class AbstractSSTableIterator implements UnfilteredRowIterator
                 //IndexInfo indexInfo = indexEntry.peek();
                 assert indexInfo != null; // kj remove assert
                 currentIndexInfo = indexInfo;
-                logger.info("in AbstractSSTableIterator#updateStateForStartingBlock() .. we did have next.. seeking to {} ==> indexEntry.getPosition() {} indexInfo.getOffset() {}", indexEntry.getPosition() + indexInfo.getOffset(), indexEntry.getPosition(), indexInfo.getOffset());
+                logger.debug("in AbstractSSTableIterator#updateStateForStartingBlock() .. we did have next.. seeking to {} ==> indexEntry.getPosition() {} indexInfo.getOffset() {}", indexEntry.getPosition() + indexInfo.getOffset(), indexEntry.getPosition(), indexInfo.getOffset());
                 reader.seekToPosition(indexEntry.getPosition() + indexInfo.getOffset());
                 reader.deserializer.clearState();
             }
@@ -484,7 +484,7 @@ abstract class AbstractSSTableIterator implements UnfilteredRowIterator
                 // We have to set the mark, and we have to set it at the beginning of the block. So if we're not at the beginning of the block, this forces us to a weird seek dance.
                 // This can only happen when reading old file however.
                 long startOfBlock = indexEntry.getPosition() + currentIndex().getOffset();
-                logger.info("kjkjkj AbstractSSTableIterator#updateBlock() startOfBlock: {} indexEntry.getPosition(): {} currentIndex().getOffset(): {}", startOfBlock, indexEntry.getPosition(), currentIndex().getOffset());
+                logger.debug("kjkjkj AbstractSSTableIterator#updateBlock() startOfBlock: {} indexEntry.getPosition(): {} currentIndex().getOffset(): {}", startOfBlock, indexEntry.getPosition(), currentIndex().getOffset());
                 long currentFilePointer = reader.file.getFilePointer();
                 if (startOfBlock == currentFilePointer)
                 {
@@ -505,7 +505,7 @@ abstract class AbstractSSTableIterator implements UnfilteredRowIterator
             assert reader.deserializer != null;
             assert mark != null;
             boolean isPastCurrentBlock = reader.file.bytesPastMark(mark) >= currentIndex().getWidth();
-            logger.info("isPastCurrentBlock() ==> {}", isPastCurrentBlock);
+            logger.debug("isPastCurrentBlock() ==> {}", isPastCurrentBlock);
             return isPastCurrentBlock;
         }
 

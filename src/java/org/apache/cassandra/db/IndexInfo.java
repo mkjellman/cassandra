@@ -154,7 +154,7 @@ public class IndexInfo implements TreeSerializable
 
     public ByteBuffer serializedKey(ClusteringComparator comparator) throws IOException
     {
-        return ClusteringPrefix.serializer.serialize(getLastName(), 0, comparator.subtypes());
+        return ClusteringPrefix.serializer.serialize(getFirstName(), 0, comparator.subtypes());
     }
 
     public void serializeValue(PageAlignedWriter writer) throws IOException

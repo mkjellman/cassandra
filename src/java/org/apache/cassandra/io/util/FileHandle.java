@@ -369,7 +369,7 @@ public class FileHandle extends SharedCloseableImpl
                 channel = new ChannelProxy(path);
             }
 
-            logger.info("complete({}) called for {} ==> mmapped? {} compressed? {} pageAligned? {}", overrideLength, path, mmapped, compressed, pageAligned);
+            logger.debug("complete({}) called for {} ==> mmapped? {} compressed? {} pageAligned? {}", overrideLength, path, mmapped, compressed, pageAligned);
 
             ChannelProxy channelCopy = channel.sharedCopy();
             try

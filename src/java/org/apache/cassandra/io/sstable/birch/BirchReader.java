@@ -18,13 +18,10 @@
 
 package org.apache.cassandra.io.sstable.birch;
 
-import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.Comparator;
 
 import com.google.common.collect.AbstractIterator;
-
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,13 +29,13 @@ import org.slf4j.LoggerFactory;
 import com.codahale.metrics.Timer;
 import org.apache.cassandra.db.ClusteringComparator;
 import org.apache.cassandra.db.ClusteringPrefix;
-import org.apache.cassandra.db.IndexInfo;
 import org.apache.cassandra.db.SerializationHeader;
 import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.util.DataPosition;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.PageAlignedReader;
 import org.apache.cassandra.metrics.BirchMetrics;
+import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
 
 import static org.apache.cassandra.io.sstable.birch.BirchWriter.SERIALIZERS;
@@ -267,9 +264,14 @@ public class BirchReader<T> implements AutoCloseable
         long offsetInOverflowPage = reader.readLong();
         // skip to offset in overflow and get key's overflow bytes. then we
         // create a single merged byte buffer with the merged results of the
-        // key bytes from the tree and it's overflow bytes
+        // key bytes from the tree and it's overflow bytes.
+        // assert here checks that we never should try to seek to an absolute offset
+        // greater than the maximum offset of the entire overflow section
+        assert (descriptor.getOverflowPageOffset() + offsetInOverflowPage) < (descriptor.getOverflowPageOffset() + descriptor.getOverflowPageLength());
         reader.seek(descriptor.getOverflowPageOffset() + offsetInOverflowPage);
+
         int lengthToRead = reader.readInt();
+
         BirchMetrics.additionalBytesReadFromOverflow.update(lengthToRead);
 
         // create one byte[] that fits the entire key (both the part of the
@@ -329,7 +331,7 @@ public class BirchReader<T> implements AutoCloseable
             indexRet = (reversed) ? entries - 1 : 0;
         }
         //indexRet = (reversed) ? entries : -1;
-        logger.info("binarySearchLeaf ==> index: {} indexRet: {}", index, indexRet);
+        logger.debug("binarySearchLeaf ==> index: {} indexRet: {}", index, indexRet);
         T elm = (indexRet < 0 || indexRet >= entries) ? null : getElement(indexRet, comparator);
 
         reader.reset(nodeStartingMark);
@@ -404,7 +406,7 @@ public class BirchReader<T> implements AutoCloseable
     private int binarySearch(ClusteringPrefix searchKey, ClusteringComparator comparator,
                              PageAlignedFileMark nodeStartingMark, int low, int high) throws IOException
     {
-        logger.info("binarySearch low: {} high: {}", low, high);
+        logger.debug("binarySearch low: {} high: {}", low, high);
         while (low <= high)
         {
             reader.reset(nodeStartingMark);
@@ -418,7 +420,7 @@ public class BirchReader<T> implements AutoCloseable
                                                                                  header.clusteringTypes());
 
             int cmp = comparator.compare(midValPrefix, searchKey);
-            logger.info("binary search loop... cmp res: {}", cmp);
+            logger.debug("binary search loop... cmp res: {}", cmp);
 
             if (cmp < 0)
                 low = mid + 1;
@@ -483,6 +485,8 @@ public class BirchReader<T> implements AutoCloseable
                 break;
             }
 
+            logger.debug("keyPrefix going to be created with keyAndOffsetPtr.key.position: {} keyAndOffsetPtr.key.capacity: {}", keyAndOffsetPtr.key.position(), keyAndOffsetPtr.key.capacity());
+            logger.debug("keyPrefix contents are [{}]", ByteBufferUtil.bytesToHex(keyAndOffsetPtr.key.duplicate()));
             ClusteringPrefix keyPrefix = ClusteringPrefix.serializer.deserialize(keyAndOffsetPtr.key,
                                                                                  version.correspondingMessagingVersion(),
                                                                                  header.clusteringTypes());
@@ -588,16 +592,16 @@ public class BirchReader<T> implements AutoCloseable
          */
         public BirchIterator(ClusteringPrefix searchKey, ClusteringComparator comparator, boolean reversed) throws IOException
         {
-            logger.info("at the top of BirchIterator constructor.. is reversed? {}", reversed);
+            logger.debug("at the top of BirchIterator constructor.. is reversed? {}", reversed);
 
             this.comparator = comparator;
             this.reversed = reversed;
             this.totalSizeOfLeafs = descriptor.getFirstNodeOffset() - descriptor.getFirstLeafOffset();
             this.totalLeafPages = (int) (totalSizeOfLeafs / descriptor.getAlignedPageSize());
 
-            if (1 == 2 && searchKey != null && searchKey.dataSize() > 0)
+            if (searchKey != null && searchKey.dataSize() > 0)
             {
-                logger.info("BirchIterator constructor was given a non-null search key! is reversed? {}", reversed);
+                logger.debug("BirchIterator constructor was given a non-null search key! is reversed? {}", reversed);
 
                 // find the element closest to the search key and start the iteration from there
                 long offset = descriptor.getRootOffset();
@@ -624,7 +628,7 @@ public class BirchReader<T> implements AutoCloseable
                     int binarySearchRes = binarySearchLeaf(searchKey, comparator, reversed).right;
                     //this.currentElmIdx = (binarySearchRes <= 0) ? -1 : binarySearchRes;
 
-                    logger.info("kjabc updating currentElmIdx {} ==> {}", this.currentElmIdx, binarySearchRes);
+                    logger.debug("kjabc updating currentElmIdx {} ==> {}", this.currentElmIdx, binarySearchRes);
                     //this.currentElmIdx = (reversed) ? binarySearchRes + 1 : binarySearchRes - 1;
                     this.currentElmIdx = (reversed) ? binarySearchRes : binarySearchRes;
                 }
@@ -638,18 +642,18 @@ public class BirchReader<T> implements AutoCloseable
 
         private void initializeIteratorToDefaultStart() throws IOException
         {
-            logger.info("at the top of initializeIteratorToDefaultStart");
+            logger.debug("at the top of initializeIteratorToDefaultStart");
             // traverse and return all elements in the tree
             if (reversed)
             {
-                this.currentPage = totalLeafPages;
+                this.currentPage = totalLeafPages - 1;
                 // as we are in reversed mode, go to the last leaf page
-                reader.seek(descriptor.getFirstLeafOffset() + ((currentPage - 1) * (descriptor.getAlignedPageSize())));
+                reader.seek(descriptor.getFirstLeafOffset() + (currentPage * (descriptor.getAlignedPageSize())));
                 PageAlignedFileMark currentPageStart = (PageAlignedFileMark) reader.mark();
                 short numElements = reader.readShort();
-                logger.info("numElements for reversed init in initializeIteratorToDefaultStart is {}", numElements);
+                logger.debug("numElements for reversed init in initializeIteratorToDefaultStart is {}", numElements);
                 //this.currentElmIdx = (numElements == 1) ? 0 : numElements - 1;
-                logger.info("updating currentElmIdx {} ==> {}", currentElmIdx, numElements - 1);
+                logger.debug("updating currentElmIdx {} ==> {}", currentElmIdx, numElements - 1);
                 this.currentElmIdx = numElements - 1;
                 reader.reset(currentPageStart);
             }
@@ -679,17 +683,17 @@ public class BirchReader<T> implements AutoCloseable
 
         public T computeNext()
         {
-            logger.info("at the top of computeNext() ==> currentElmIdx: {} currentPage: {} reversed: {}", currentElmIdx, currentPage, reversed);
+            logger.debug("at the top of computeNext() ==> currentElmIdx: {} currentPage: {} reversed: {}", currentElmIdx, currentPage, reversed);
             try
             {
                 if (reversed)
                 {
-                    //if (currentPage - 1 < 0 && currentElmIdx < 0)
-                      //  return endOfData();
+                    if (currentPage - 1 < 0 && currentElmIdx < 0)
+                        return endOfData();
 
-                    int newCurrentPage = (currentPage == 0) ? 0 : currentPage - 1;
+                    //int newCurrentPage = (currentPage == 0) ? 0 : currentPage - 1;
                     //int newCurrentPage = currentPage - 1;
-                    logger.info("kjisreversed and currentPage: {} currentElmIdx: {}", currentPage, currentElmIdx);
+                    logger.debug("kjisreversed and currentPage: {} currentElmIdx: {}", currentPage, currentElmIdx);
                     //if (newCurrentPage < 0 && currentElmIdx <= 1)
                       //  return endOfData();
                    // if (currentPage <= 0)
@@ -699,7 +703,7 @@ public class BirchReader<T> implements AutoCloseable
                     //assert newCurrentPage >= 0;
                     //newCurrentPage = currentPage;
                     //if (currentElmIdx >= 0)
-                        reader.seek(descriptor.getFirstLeafOffset() + (newCurrentPage * (descriptor.getAlignedPageSize())));
+                        reader.seek(descriptor.getFirstLeafOffset() + (currentPage * (descriptor.getAlignedPageSize())));
                     //reader.seek(descriptor.getFirstLeafOffset() + ((currentPage - 1) * (descriptor.getAlignedPageSize())));
                 }
                 else
@@ -710,7 +714,7 @@ public class BirchReader<T> implements AutoCloseable
                 PageAlignedFileMark leafOffsetStart = (PageAlignedFileMark) reader.mark();
 
                 short numElements = reader.readShort();
-                logger.info("in computeNext() reader.getOffset() {} currentPage {} currentElmIdx {} reversed {} numElements {} reversed {}",
+                logger.debug("in computeNext() reader.getOffset() {} currentPage {} currentElmIdx {} reversed {} numElements {} reversed {}",
                             reader.getOffset(), currentPage, currentElmIdx, reversed, numElements, reversed);
 
                 if (!reversed && currentElmIdx >= numElements)
@@ -739,10 +743,10 @@ public class BirchReader<T> implements AutoCloseable
                     // and then start iterating from the end to the front again. If we're on the last element in
                     // the page (technically this will be the first element but given we're in reversed mode that is
                     // the last), then we've done and have iterated thru all elements and should now return endOfData()
-                    logger.info("kjabc123 reversed: {} currentElmIdx: {} currentPage: {}", reversed, currentElmIdx, currentPage);
+                    logger.debug("kjabc123 reversed: {} currentElmIdx: {} currentPage: {}", reversed, currentElmIdx, currentPage);
                     // we have iterated over all elements in the current page
                     // check if we have any other pages to consume from next
-                    if (currentPage - 1 <= 0)
+                    if (currentPage - 1 < 0)
                     {
                         // we have exhausted all elements in all pages
                         return endOfData();
@@ -790,7 +794,7 @@ public class BirchReader<T> implements AutoCloseable
     @Override
     public void close()
     {
-        logger.info("BirchReader#close()");
+        logger.debug("BirchReader#close()");
         FileUtils.closeQuietly(reader);
     }
 }

@@ -316,7 +316,7 @@ public class BigTableWriter extends SSTableWriter
         long indexFileLength = new File(descriptor.filenameFor(Component.PRIMARY_INDEX)).length();
         int dataBufferSize = optimizationStrategy.bufferSize(stats.estimatedPartitionSize.percentile(DatabaseDescriptor.getDiskOptimizationEstimatePercentile()));
         int indexBufferSize = optimizationStrategy.bufferSize(indexFileLength / indexSummary.size());
-        logger.info("in BigTableWriter#openFinal() not using calculated indexBufferSize {}", indexBufferSize);
+        logger.debug("in BigTableWriter#openFinal() not using calculated indexBufferSize {}", indexBufferSize);
         //FileHandle ifile = iwriter.builder.bufferSize(indexBufferSize).complete();
         FileHandle ifile = iwriter.builder.complete();
         if (compression)
@@ -453,10 +453,10 @@ public class BigTableWriter extends SSTableWriter
             {
                 indexFile.startNewSegment();
                 indexFile.startNewNonPageAlignedSubSegment();
-                logger.info("startNewNonPageAlignedSubSegment()... current file offset is {} key ==> position() {} capacity() {} limit() {}",
+                logger.debug("startNewNonPageAlignedSubSegment()... current file offset is {} key ==> position() {} capacity() {} limit() {}",
                             indexFile.getCurrentFilePosition(), key.getKey().position(), key.getKey().capacity(), key.getKey().limit());
                 ByteBufferUtil.writeWithShortLength(key.getKey(), indexFile.stream);
-                logger.info("after writeWithShortLength.... indexFile.getCurrentFilePosition() {} key ==> position() {} capacity() {} limit() {}",
+                logger.debug("after writeWithShortLength.... indexFile.getCurrentFilePosition() {} key ==> position() {} capacity() {} limit() {}",
                             indexFile.getCurrentFilePosition(), key.getKey().position(), key.getKey().capacity(), key.getKey().limit());
                 rowIndexEntrySerializer.serialize(indexEntry, indexFile);
             }

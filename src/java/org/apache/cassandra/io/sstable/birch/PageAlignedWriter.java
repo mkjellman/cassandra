@@ -200,6 +200,7 @@ public class PageAlignedWriter implements DataOutput, WritableByteChannel
     private int currentSubSegmentPageBlockSize;
     private boolean segmentInProgress = false;
     private boolean subSegmentInProgress = false;
+    private boolean hasBeenFinalized = false;
 
     private List<AlignedSubSegment> finishedSubSegments;
 
@@ -372,6 +373,7 @@ public class PageAlignedWriter implements DataOutput, WritableByteChannel
 
         // first, serialize the total number of segments we're going to serialize
         out.writeInt(finishedSegments.size());
+        logger.debug("total number of segments we're going to serialize: {}", finishedSegments.size());
 
         // we do finishedSegments.size() + 1 as we calculate the length on the fly
         // at read time by using the current element + current elenent + 1 to avoid eating the serialization cost
@@ -453,6 +455,7 @@ public class PageAlignedWriter implements DataOutput, WritableByteChannel
         // segment pointers.. this way we can look at the end of
         // the file minus 1 long to find the encoded segment pointers
         out.writeLong(segmentPointersStartingOffset);
+        logger.debug("wrote out segmentPointersStartingOffset: {} out.getFilePointer(): {}", segmentPointersStartingOffset, out.getFilePointer());
     }
 
     public PageAlignedFileMark mark() throws IOException
@@ -597,9 +600,9 @@ public class PageAlignedWriter implements DataOutput, WritableByteChannel
      * to the original position plus the number of bytes read/used.
      *
      * @param src ByteBuffer to read bytes from to write into the OutputStream/file
-     * @param off the offset to
-     * @param len
-     * @return
+     * @param off the offset to start reading from the src buffer to write
+     * @param len the number of bytes to write from the src buffer
+     * @return total number of bytes written
      * @throws IOException
      */
     public int write(ByteBuffer src, int off, int len) throws IOException
@@ -616,25 +619,25 @@ public class PageAlignedWriter implements DataOutput, WritableByteChannel
         src.position(off);
 
         int currentSrcOffset = off;
-        int bytesRead = 0;
-        while (bytesRead < len)
+        int bytesWritten = 0;
+        while (bytesWritten < len)
         {
             // always attempt to write a full BUF_SIZE, or the maximum remaining < BUF_SIZE
-            int bytesRemaining = len - bytesRead;
-            int bytesToRead = (bytesRemaining > BUF_SIZE) ? BUF_SIZE : bytesRemaining;
-            ByteBufferUtil.arrayCopy(src, currentSrcOffset, buf, 0, bytesToRead);
+            int bytesRemaining = len - bytesWritten;
+            int bytesToWrite = (bytesRemaining > BUF_SIZE) ? BUF_SIZE : bytesRemaining;
+            ByteBufferUtil.arrayCopy(src, currentSrcOffset, buf, 0, bytesToWrite);
 
             // now, write the number of bytes written into the buffer to the file
-            out.write(buf, 0, bytesToRead);
+            out.write(buf, 0, bytesToWrite);
 
             // update the source ByteBuffer's position() by the number of bytes read,
             // buffered, and written in this iteration
-            src.position(src.position() + bytesToRead);
-            bytesRead += bytesToRead;
-            currentSrcOffset += bytesToRead;
+            src.position(src.position() + bytesToWrite);
+            bytesWritten += bytesToWrite;
+            currentSrcOffset += bytesToWrite;
         }
 
-        return bytesRead;
+        return bytesWritten;
     }
 
     /**
@@ -685,14 +688,26 @@ public class PageAlignedWriter implements DataOutput, WritableByteChannel
     {
         if (directoryFD >= 0)
         {
-            try { NativeLibrary.tryCloseFD(directoryFD); }
-            catch (Throwable t) { handle(t, throwExceptions); }
+            try
+            {
+                NativeLibrary.tryCloseFD(directoryFD);
+            }
+            catch (Throwable t)
+            {
+                handle(t, throwExceptions);
+            }
             directoryFD = -1;
         }
 
         // close is idempotent
-        try { out.close(); }
-        catch (Throwable t) { handle(t, throwExceptions); }
+        try
+        {
+            out.close();
+        }
+        catch (Throwable t)
+        {
+            handle(t, throwExceptions);
+        }
     }
 
     public Throwable abort(Throwable accumulate)
@@ -709,6 +724,10 @@ public class PageAlignedWriter implements DataOutput, WritableByteChannel
     {
         assert !segmentInProgress;
 
+        if (hasBeenFinalized) {
+            return;
+        }
+
         try
         {
             // todo: is it right to do this here? or should serializeSegmentPointers do it automagically always?
@@ -721,6 +740,7 @@ public class PageAlignedWriter implements DataOutput, WritableByteChannel
             lastFlushOffset = out.length();
             finishAndFlush();
 
+            hasBeenFinalized = true;
 
         }
         catch (IOException e)
@@ -745,6 +765,8 @@ public class PageAlignedWriter implements DataOutput, WritableByteChannel
 
         if (writerClosed)
             return;
+
+        prepareToCommit();
 
         cleanup(false);
 

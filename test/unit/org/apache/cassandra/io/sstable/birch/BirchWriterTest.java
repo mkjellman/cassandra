@@ -46,6 +46,7 @@ import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.sstable.format.big.BigFormat;
 import org.apache.cassandra.io.util.PageAlignedReader;
 import org.apache.cassandra.schema.KeyspaceParams;
+import org.apache.cassandra.utils.ByteBufferUtil;
 
 public class BirchWriterTest extends SchemaLoader
 {
@@ -54,7 +55,7 @@ public class BirchWriterTest extends SchemaLoader
     protected static final String KEYSPACE = "BirchWriterTest";
     protected static final String CF = "StandardTimeUUID1";
 
-    protected static final Version CURRENT_VERSION = BigFormat.instance.getVersion("md");
+    protected static final Version CURRENT_VERSION = BigFormat.instance.getVersion("na");
 
     private static final Random RANDOM = new Random();
 
@@ -90,7 +91,7 @@ public class BirchWriterTest extends SchemaLoader
         Keyspace keyspace = Keyspace.open(KEYSPACE);
         ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(CF);
 
-        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), "btree");
+        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), ".birch");
 
         Iterator<TreeSerializable> timeUUIDIterator = new TimeUUIDTreeSerializableIterator(100000, 5000);
         BirchWriter birchWriter = new BirchWriter.Builder(timeUUIDIterator, BirchWriter.SerializerType.INDEXINFO, cfs.getComparator()).build();
@@ -113,7 +114,7 @@ public class BirchWriterTest extends SchemaLoader
         Keyspace keyspace = Keyspace.open(KEYSPACE);
         ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(CF);
 
-        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), "btree");
+        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), ".birch");
 
         try (PageAlignedWriter writer = new PageAlignedWriter(tmpFile))
         {
@@ -157,7 +158,7 @@ public class BirchWriterTest extends SchemaLoader
         Keyspace keyspace = Keyspace.open(KEYSPACE);
         ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(CF);
 
-        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), "btree");
+        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), ".birch");
 
         PageAlignedWriter writer = new PageAlignedWriter(tmpFile);
 
@@ -198,7 +199,7 @@ public class BirchWriterTest extends SchemaLoader
         Keyspace keyspace = Keyspace.open(KEYSPACE);
         ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(CF);
 
-        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), "btree");
+        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), ".birch");
 
         Iterator<TreeSerializable> timeUUIDIterator = new TimeUUIDTreeSerializableIterator(10000, 300);
         List<IndexInfo> samples = ((TimeUUIDTreeSerializableIterator) timeUUIDIterator).getSamples();
@@ -243,7 +244,7 @@ public class BirchWriterTest extends SchemaLoader
         Keyspace keyspace = Keyspace.open(KEYSPACE);
         ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(CF);
 
-        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), "btree");
+        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), ".birch");
 
         try (PageAlignedWriter writer = new PageAlignedWriter(tmpFile))
         {
@@ -294,7 +295,9 @@ public class BirchWriterTest extends SchemaLoader
         Keyspace keyspace = Keyspace.open(KEYSPACE);
         ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(CF);
 
-        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), "btree");
+        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), ".birch");
+
+        int generatedIteratorBaseSize = 10000;
 
         List<IndexInfo> expected = null;
         try (PageAlignedWriter writer = new PageAlignedWriter(tmpFile))
@@ -309,7 +312,7 @@ public class BirchWriterTest extends SchemaLoader
                 writer.write(key);
                 writer.finalizeCurrentSubSegment();
 
-                Iterator<TreeSerializable> timeUUIDIterator = new TimeUUIDTreeSerializableIterator(10000 * (i + 1), (i == 0) ? -1 : 0);
+                Iterator<TreeSerializable> timeUUIDIterator = new TimeUUIDTreeSerializableIterator(generatedIteratorBaseSize * (i + 1), (i == 0) ? -1 : 0);
                 if (i == 0)
                     expected = ((TimeUUIDTreeSerializableIterator) timeUUIDIterator).getSamples();
 
@@ -329,6 +332,7 @@ public class BirchWriterTest extends SchemaLoader
             reader.nextSubSegment();
             SerializationHeader serializationHeader = new SerializationHeader(true, cfs.metadata(), cfs.metadata().regularAndStaticColumns(), EncodingStats.NO_STATS);
             BirchReader birchReader = new BirchReader(reader, serializationHeader, CURRENT_VERSION);
+            Assert.assertEquals(generatedIteratorBaseSize, expected.size());
             ListIterator<IndexInfo> expectedIterator = expected.listIterator(expected.size());
             Iterator<IndexInfo> iterator = birchReader.getIterator(cfs.getComparator(), true);
             int iteratorCount = 0;
@@ -337,6 +341,7 @@ public class BirchWriterTest extends SchemaLoader
                 IndexInfo next = iterator.next();
                 IndexInfo expectedIndexInfo = expectedIterator.previous();
 
+                logger.info("comparing next: {} to expected: {}", ByteBufferUtil.bytesToHex(next.serializedKey(cfs.getComparator())), ByteBufferUtil.bytesToHex(expectedIndexInfo.serializedKey(cfs.getComparator())));
                 Assert.assertTrue(cfs.getComparator().compare(expectedIndexInfo.getFirstName(), next.getFirstName()) == 0);
                 Assert.assertEquals(expectedIndexInfo.getOffset(), next.getOffset());
                 Assert.assertEquals(expectedIndexInfo.getWidth(), next.getWidth());
@@ -355,7 +360,7 @@ public class BirchWriterTest extends SchemaLoader
         Keyspace keyspace = Keyspace.open(KEYSPACE);
         ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(CF);
 
-        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), "btree");
+        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), ".birch");
 
         Iterator<TreeSerializable> timeUUIDIterator = new TimeUUIDTreeSerializableIterator(3000000, 1000000);
 
@@ -468,7 +473,7 @@ public class BirchWriterTest extends SchemaLoader
         Keyspace keyspace = Keyspace.open(KEYSPACE);
         ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(CF);
 
-        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), "btree");
+        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), ".birch");
 
         int sampleRate = 5000;
         Iterator<TreeSerializable> timeUUIDIterator = new TimeUUIDTreeSerializableIterator(50000, sampleRate);

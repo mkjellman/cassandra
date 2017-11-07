@@ -149,7 +149,7 @@ public class BirchIndexedEntry implements IndexedEntry, AutoCloseable
         boolean hasNext = !prepared || (iterator != null && iterator.hasNext());
         if (hasNext)
             assert !isDone;
-        logger.info("BirchIndexedEntry#hasNext {}", hasNext);
+        logger.debug("BirchIndexedEntry#hasNext {}", hasNext);
         return hasNext;
         //return iterator == null || iterator.hasNext();
     }
@@ -188,7 +188,7 @@ public class BirchIndexedEntry implements IndexedEntry, AutoCloseable
 
     public void setReversed(boolean reversed)
     {
-        logger.info("BirchIndexedEntry#setReversed(reversed {})", reversed);
+        logger.debug("BirchIndexedEntry#setReversed(reversed {})", reversed);
         reset(reversed);
         iteratorDirectionReversed = reversed;
         iterator = null;
@@ -205,7 +205,7 @@ public class BirchIndexedEntry implements IndexedEntry, AutoCloseable
 
     public void reset(boolean reversed)
     {
-        logger.info("BirchIndexedEntry#reset(reversed {})", reversed);
+        logger.debug("BirchIndexedEntry#reset(reversed {})", reversed);
         this.iteratorDirectionReversed = reversed;
         try
         {

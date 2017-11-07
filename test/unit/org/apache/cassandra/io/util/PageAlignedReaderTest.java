@@ -23,19 +23,45 @@ import java.io.IOException;
 import java.util.UUID;
 
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
+import org.apache.cassandra.SchemaLoader;
+import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.db.marshal.TimeUUIDType;
+import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.birch.PageAlignedWriter;
 import org.apache.cassandra.io.util.DataPosition;
 import org.apache.cassandra.io.util.PageAlignedReader;
+import org.apache.cassandra.schema.KeyspaceParams;
 
 public class PageAlignedReaderTest
 {
 
+    @BeforeClass
+    public static void defineSchema() throws ConfigurationException
+    {
+        DatabaseDescriptor.daemonInitialization();
+
+        /*
+        if (FBUtilities.isWindows)
+        {
+            standardMode = DatabaseDescriptor.getDiskAccessMode();
+            indexMode = DatabaseDescriptor.getIndexAccessMode();
+
+            DatabaseDescriptor.setDiskAccessMode(Config.DiskAccessMode.standard);
+            DatabaseDescriptor.setIndexAccessMode(Config.DiskAccessMode.standard);
+        }
+        */
+
+        SchemaLoader.prepareServer();
+        DatabaseDescriptor.setMaxValueSize(1024 * 1024); // set max value size to 1MB
+    }
+
     @Test
     public void calculateRelativeMmappedOffsets() throws Exception
     {
-        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), "btree");
+        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), ".birch");
         try
         {
             createPageAlignedWriter(tmpFile);
@@ -70,7 +96,7 @@ public class PageAlignedReaderTest
     @Test(expected= IOException.class)
     public void getSegmentForBogusOffset() throws Exception
     {
-        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), "btree");
+        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), ".birch");
         try
         {
             createPageAlignedWriter(tmpFile);
@@ -92,7 +118,7 @@ public class PageAlignedReaderTest
     @Test
     public void getSegmentForValidOffset() throws Exception
     {
-        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), "btree");
+        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), ".birch");
         try
         {
             createPageAlignedWriter(tmpFile);
@@ -115,7 +141,7 @@ public class PageAlignedReaderTest
     @Test
     public void testMarkAndReset() throws Exception
     {
-        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), "btree");
+        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), ".birch");
         try
         {
             createPageAlignedWriter(tmpFile);

@@ -27,6 +27,8 @@ import java.nio.ByteBuffer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.utils.ByteBufferUtil;
+
 /**
  * Used while creating a new {@link org.apache.cassandra.io.sstable.birch.BirchWriter}
  * tree to keep keys added to he tree that cannot fit within a single Birch
@@ -166,6 +168,13 @@ public class Overflow implements AutoCloseable
             // we want to transfer the bytes of the element that couldn't fit in the leaf
             // so this will be from the current position to the limit
             int bytesRemaining = elm.limit() - elm.position();
+            assert bytesRemaining > 0;
+
+            // the position of the buffer *before* we add anything; this is what we will return
+            // as the node will need to serialize this so we know the relative offset into the
+            // overall overflow buffer where the overflow bytes for this element being added start
+            int startingPos = overflowBuf.position();
+
             // serialize the length of the bytes we're about to write so we can deserialize on the other side
             overflowBuf.putInt(bytesRemaining);
             while (bytesRemaining > 0)
@@ -176,13 +185,20 @@ public class Overflow implements AutoCloseable
                 bytesRemaining -= bytesToTransfer;
             }
 
-            return overflowBuf.position();
+            return startingPos;
         }
         else
         {
             // we want to transfer the bytes of the element that couldn't fit in the leaf
             // so this will be from the current position to the limit
             int bytesRemaining = elm.limit() - elm.position();
+            assert bytesRemaining > 0;
+
+            // the position of the file *before* we write anything.. we need this and will return it
+            // as this is what relative offset we will serialize in the node itself to know where
+            // the overflow data for this element being added
+            long startingPos = overflowFileBuf.getFilePointer();
+
             // serialize the length of the bytes we're about to write so we can deserialize on the other side
             overflowFileBuf.writeInt(bytesRemaining);
             while (bytesRemaining > 0)
@@ -193,7 +209,7 @@ public class Overflow implements AutoCloseable
                 bytesRemaining -= bytesToTransfer;
             }
 
-            return overflowFileBuf.getFilePointer();
+            return startingPos;
         }
     }
 

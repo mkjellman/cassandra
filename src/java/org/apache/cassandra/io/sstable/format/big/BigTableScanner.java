@@ -190,6 +190,7 @@ public class BigTableScanner implements ISSTableScanner
         long indexPosition = sstable.getIndexScanPosition(currentRange.left);
         try
         {
+            logger.info("ifile instance of {}", ifile.getClass().getName());
             if (ifile instanceof PageAlignedReader)
                 ((PageAlignedReader) ifile).findAndSetSegmentAndSubSegmentCurrentForPosition(indexPosition);
 
@@ -205,7 +206,8 @@ public class BigTableScanner implements ISSTableScanner
                     if (sstable.descriptor.version.hasBirchIndexes())
                         ifile.readBoolean();
 
-                    long dataPosition = ifile.readLong();
+                    long dataPosition = (sstable.descriptor.version.hasBirchIndexes()) ? ifile.readLong()
+                                                                                       : IndexedEntry.Serializer.readPosition(ifile, sstable.descriptor.version);
 
                     if (ifile instanceof PageAlignedReader)
                         ((PageAlignedReader) ifile).findAndSetSegmentAndSubSegmentCurrentForPosition(indexPosition);

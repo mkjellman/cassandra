@@ -95,7 +95,7 @@ public class BirchReaderTest extends SchemaLoader
         Keyspace keyspace = Keyspace.open(KEYSPACE);
         ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(CF);
 
-        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), "btree");
+        File tmpFile = File.createTempFile(UUID.randomUUID().toString(), ".birch");
 
         PageAlignedWriter writer = new PageAlignedWriter(tmpFile);
 
@@ -107,35 +107,37 @@ public class BirchReaderTest extends SchemaLoader
         birchWriter.serialize(writer);
         writer.finalizeCurrentSubSegment();
         writer.finalizeCurrentSegment();
+        writer.prepareToCommit();
         writer.close();
 
         PageAlignedReader reader = PageAlignedReader.open(tmpFile);
         reader.setSegment(0);
         SerializationHeader serializationHeader = new SerializationHeader(true, cfs.metadata(), cfs.metadata().regularAndStaticColumns(), EncodingStats.NO_STATS);
-        BirchReader birchReader = new BirchReader(reader, serializationHeader, BigFormat.instance.getVersion("md"));
-
-        // IndexInfo doesn't override equals, so put the bytes in the set
-        // and check that for the samples in this case...
-        Set<ByteBuffer> sampleNames = new HashSet<>();
-        for (IndexInfo sample : ((TimeUUIDTreeSerializableIterator) timeUUIDIterator).getSamples())
+        try (BirchReader birchReader = new BirchReader(reader, serializationHeader, BigFormat.instance.getVersion("na")))
         {
-            sampleNames.add(sample.serializedKey(cfs.getComparator()));
+            // IndexInfo doesn't override equals, so put the bytes in the set
+            // and check that for the samples in this case...
+            Set<ByteBuffer> sampleNames = new HashSet<>();
+            for (IndexInfo sample : ((TimeUUIDTreeSerializableIterator) timeUUIDIterator).getSamples())
+            {
+                sampleNames.add(sample.serializedKey(cfs.getComparator()));
+            }
+
+            BirchReader.BirchIterator iterator = birchReader.getIterator(cfs.getComparator(), reversed);
+
+            int iteratorCount = 0;
+            int sampleMatches = 0;
+            while (iterator.hasNext())
+            {
+                IndexInfo next = (IndexInfo) iterator.next();
+                if (sampleNames.contains(next.serializedKey(cfs.getComparator())))
+                    sampleMatches++;
+                iteratorCount++;
+            }
+
+            Assert.assertEquals(birchReader.getElementCount(), iteratorCount);
+            Assert.assertEquals(targetTreeSize, iteratorCount);
+            Assert.assertEquals(sampleNames.size(), sampleMatches);
         }
-
-        BirchReader.BirchIterator iterator = birchReader.getIterator(cfs.getComparator(), reversed);
-
-        int iteratorCount = 0;
-        int sampleMatches = 0;
-        while (iterator.hasNext())
-        {
-            IndexInfo next = (IndexInfo) iterator.next();
-            if (sampleNames.contains(next.serializedKey(cfs.getComparator())))
-                sampleMatches++;
-            iteratorCount++;
-        }
-
-        Assert.assertEquals(birchReader.getElementCount(), iteratorCount);
-        Assert.assertEquals(targetTreeSize, iteratorCount);
-        Assert.assertEquals(sampleNames.size(), sampleMatches);
     }
 }
