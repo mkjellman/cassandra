@@ -116,11 +116,13 @@ jobs:
                 echo "** after circleci cmd ${x}"
                 RETURN="$?"
                 if [ "${RETURN}" -ne "0" ]; then
+                    set -eo pipefail
                     continue
                 fi
                 cat /tmp/java_tests_${x}.txt | cut -c 27-1000000
                 RETURN="$?"
                 if [ "${RETURN}" -ne "0" ]; then
+                    set -eo pipefail
                     continue
                 fi
                 set -eo pipefail && cat /tmp/java_tests_${x}.txt | cut -c 27-1000000 | grep "Test\.java$" > /tmp/java_tests_${x}_final.txt
