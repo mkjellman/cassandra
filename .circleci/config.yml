@@ -69,6 +69,7 @@ jobs:
             # we'd have to install it here at runtime -- which will make things slow, so do yourself a favor and
             # rebuild the docker image! (it automatically pulls the latest requirements.txt on build)
             export LANG=en_US.UTF-8
+            source ~/.bashrc
             source ~/env/bin/activate
             export CASS_DRIVER_NO_EXTENSIONS=true
             export CASS_DRIVER_NO_CYTHON=true
@@ -115,6 +116,7 @@ jobs:
             echo "***python tests***"
             cd cassandra-dtest
             export CASSANDRA_DIR=/home/cassandra/cassandra
+            source ~/.bashrc
             source ~/env/bin/activate
             ./run_dtests.py --vnodes true --nose-options='--verbosity=3 --dtest-collect-only' 2>&1 | tee /tmp/pythontestlist
             TEST_TAG=novnode ./run_dtests.py --vnodes false --nose-options='--verbosity=3 --dtest-collect-only --attr=!resource-intensive' 2>&1 | tee -a /tmp/pythontestlist
@@ -139,6 +141,8 @@ jobs:
          command: |
             export LANG=en_US.UTF-8
             export JAVA_TOOL_OPTIONS="-Dfile.encoding=UTF8"
+            source ~/.bashrc
+
             cd ~/cassandra
             ${ANT_HOME}/bin/ant testclasslist -Dtest.classlistfile=/tmp/java_tests_${CIRCLE_NODE_INDEX}_final.txt || true
          no_output_timeout: 15m
@@ -150,6 +154,7 @@ jobs:
             cat /tmp/regular_python_tests_final.txt
             echo "*** kj ***"
 
+            source ~/.bashrc
             source ~/env/bin/activate
             source ~/env_dtest_common
             cd ~/cassandra-dtest
@@ -164,6 +169,7 @@ jobs:
           name: Run dtests (without vnodes)
           no_output_timeout: 100m
           command: |
+            source ~/.bashrc
             source ~/env/bin/activate
             source ~/env_dtest_common
             cd ~/cassandra-dtest
@@ -174,6 +180,7 @@ jobs:
           name: Run dtests (off-heap)
           no_output_timeout: 70m
           command: |
+            source ~/.bashrc
             source ~/env/bin/activate
             source ~/env_dtest_common
             cd ~/cassandra-dtest
