@@ -71,12 +71,11 @@ jobs:
             # we'd have to install it here at runtime -- which will make things slow, so do yourself a favor and
             # rebuild the docker image! (it automatically pulls the latest requirements.txt on build)
             export LANG=en_US.UTF-8
-            virtualenv --python=python2 --no-site-packages venv
-            source venv/bin/activate
+            env/bin/activate
             export CASS_DRIVER_NO_EXTENSIONS=true
             export CASS_DRIVER_NO_CYTHON=true
-            pip install -r ~/cassandra-dtest/requirements.txt
-            pip freeze
+            pip install --user -r ~/cassandra-dtest/requirements.txt
+            pip freeze --user
       - run:
           name: Build Cassandra
           command: |
