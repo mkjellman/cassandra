@@ -105,7 +105,7 @@ jobs:
             rm -fr ~/cassandra-dtest/upgrade_tests
             echo "***java tests***"
             echo $(circleci tests glob "$HOME/cassandra/test/unit/**/*.java")
-            circleci tests glob "$HOME/cassandra/test/unit/**/*.java" | circleci tests split --split-by=filesize > /tmp/java_tests.txt
+            circleci tests glob "$HOME/cassandra/test/unit/**/*.java" | circleci tests split > /tmp/java_tests.txt
             cat /tmp/java_tests.txt | cut -c 27-1000000 | grep "Test\.java$" > /tmp/java_tests_final.txt
             cat /tmp/java_tests.txt
             echo "***final java tests***"
