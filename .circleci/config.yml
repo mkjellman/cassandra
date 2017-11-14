@@ -112,6 +112,10 @@ jobs:
             # split up the unit tests into groups based on the number of containers we have
             for x in $(seq 0 100); do
                 set -eo pipefail && circleci tests split --split-by=timings --timings-type=filename --index=$x --total=100 /tmp/all_java_unit_tests.txt > /tmp/java_tests_${x}.txt
+                RETURN="$?"
+                if [ "${RETURN}" -eq "0" ]; then
+                    break
+                fi
                 cat /tmp/java_tests_${x}.txt | cut -c 27-1000000 | grep "Test\.java$" > /tmp/java_tests_${x}_final.txt
                 echo "** /tmp/java_tests_${x}_final.txt"
                 cat /tmp/java_tests_${x}_final.txt
@@ -146,6 +150,9 @@ jobs:
             export JAVA_TOOL_OPTIONS="-Dfile.encoding=UTF8"
             cd ~/cassandra
             for x in $(seq 1 100); do
+                if [ ! -f /tmp/java_tests_${x}_final.txt ]; then
+                    break
+                fi
                 ${ANT_HOME}/bin/ant testclasslist -Dtest.classlistfile=/tmp/java_tests_${x}_final.txt || true
             done
          no_output_timeout: 15m
