@@ -110,30 +110,11 @@ jobs:
             set -eo pipefail && circleci tests glob "$HOME/cassandra/test/unit/**/*.java" > /tmp/all_java_unit_tests.txt
 
             # split up the unit tests into groups based on the number of containers we have
-            for x in $(seq 0 100); do
-                echo "** starting ${x}"
-                set -eo pipefail && circleci tests split --split-by=timings --timings-type=filename --index=$x --total=100 /tmp/all_java_unit_tests.txt > /tmp/java_tests_${x}.txt
-                echo "** after circleci cmd ${x}"
-                RETURN="$?"
-                if [ "${RETURN}" -ne "0" ]; then
-                    set -eo pipefail
-                    continue
-                fi
-                cat /tmp/java_tests_${x}.txt | cut -c 27-1000000
-                RETURN="$?"
-                if [ "${RETURN}" -ne "0" ]; then
-                    set -eo pipefail
-                    continue
-                fi
-                set -eo pipefail && cat /tmp/java_tests_${x}.txt | cut -c 27-1000000 | grep "Test\.java$" > /tmp/java_tests_${x}_final.txt
-                if [ ! -f /tmp/java_tests_${x}_final.txt ]; then
-                    continue
-                fi
-                echo "** after cat and cut ${x}"
-                echo "** /tmp/java_tests_${x}_final.txt"
-                cat /tmp/java_tests_${x}_final.txt
-                echo "***"
-            done
+            set -eo pipefail && circleci tests split --split-by=timings --timings-type=filename --index=${CIRCLE_NODE_INDEX} --total=${CIRCLE_NODE_TOTAL} /tmp/all_java_unit_tests.txt > /tmp/java_tests_${CIRCLE_NODE_INDEX}.txt
+            set -eo pipefail && cat /tmp/java_tests_${CIRCLE_NODE_INDEX}.txt | cut -c 27-1000000 | grep "Test\.java$" > /tmp/java_tests_${CIRCLE_NODE_INDEX}_final.txt
+            echo "** /tmp/java_tests_${CIRCLE_NODE_INDEX}_final.txt"
+            cat /tmp/java_tests_${CIRCLE_NODE_INDEX}_final.txt
+            
             echo "***python tests***"
             cd cassandra-dtest
             export CASSANDRA_DIR=../cassandra
@@ -162,12 +143,7 @@ jobs:
             export LANG=en_US.UTF-8
             export JAVA_TOOL_OPTIONS="-Dfile.encoding=UTF8"
             cd ~/cassandra
-            for x in $(seq 0 100); do
-                if [ ! -f /tmp/java_tests_${x}_final.txt ]; then
-                    continue
-                fi
-                ${ANT_HOME}/bin/ant testclasslist -Dtest.classlistfile=/tmp/java_tests_${x}_final.txt || true
-            done
+            ${ANT_HOME}/bin/ant testclasslist -Dtest.classlistfile=/tmp/java_tests_${CIRCLE_NODE_INDEX}_final.txt || true
          no_output_timeout: 15m
       - run:
           name: Run dtests
