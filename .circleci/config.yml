@@ -16,10 +16,8 @@ jobs:
           command: |
             echo "export LANG=en_US.UTF-8" >> ~/env_dtest_common
             echo "export JDK_HOME=/usr/local/openjdk8u154-cassandra-b02" >> ~/env_dtest_common
-            echo 'export JAVA_HOME=$JDK_HOME/jre' >> ~/env_dtest_common
             echo 'export JAVA8_HOME=$JDK_HOME' >> ~/env_dtest_common
             echo "export JAVA7_HOME=/usr/local/openjdk7u82-cassandra-b02" >> ~/env_dtest_common
-            echo "export ANT_HOME=/usr/local/apache-ant-1.10.1" >> ~/env_dtest_common
             echo "export DEBUG=true" >> ~/env_dtest_common
             echo "export PRINT_DEBUG=true" >> ~/env_dtest_common
             echo 'export allow_root="yes"' >> ~/env_dtest_common
@@ -148,7 +146,10 @@ jobs:
           name: Run dtests
           no_output_timeout: 100m
           command: |
-            echo "whoami?? $(whoami)"
+            echo "cat /tmp/regular_python_tests_final.txt"
+            cat /tmp/regular_python_tests_final.txt
+            echo "*** kj ***"
+
             source ~/env/bin/activate
             source ~/env_dtest_common
             cd ~/cassandra-dtest
@@ -163,9 +164,8 @@ jobs:
             source ~/env/bin/activate
             source ~/env_dtest_common
             cd ~/cassandra-dtest
-            export DISABLE_VNODES="true"
             export TEST_TAG="novnodes"
-            ./run_dtests.py --vnodes true --nose-options="--verbosity=3 --with-dtestxunit --nocapture --attr=!resource-intensive" `cat /tmp/novnode_python_tests_final.txt`  2>&1 | tee /tmp/dtest/stdout-novnodes.txt || true
+            ./run_dtests.py --vnodes false --nose-options="--verbosity=3 --with-dtestxunit --nocapture --attr=!resource-intensive" `cat /tmp/novnode_python_tests_final.txt`  2>&1 | tee /tmp/dtest/stdout-novnodes.txt || true
             cp nosetests.xml nosetests-novnode.xml
       - run:
           name: Run dtests (off-heap)
