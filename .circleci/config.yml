@@ -70,7 +70,7 @@ jobs:
             # rebuild the docker image! (it automatically pulls the latest requirements.txt on build)
             export LANG=en_US.UTF-8
             source ~/env/bin/activate
-            source ~/.bashrc
+            export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
             export CASS_DRIVER_NO_EXTENSIONS=true
             export CASS_DRIVER_NO_CYTHON=true
             pip install -r ~/cassandra-dtest/requirements.txt
@@ -80,6 +80,7 @@ jobs:
           command: |
             export LANG=en_US.UTF-8
             export JAVA_TOOL_OPTIONS="-Dfile.encoding=UTF8"
+            export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
             cd ~/cassandra
             # Loop to prevent failure due to maven-ant-tasks not downloading a jar..
             for x in $(seq 1 3); do
@@ -117,7 +118,8 @@ jobs:
             cd cassandra-dtest
             export CASSANDRA_DIR=/home/cassandra/cassandra
             source ~/env/bin/activate
-            source ~/.bashrc
+            export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
+
             ./run_dtests.py --vnodes true --nose-options='--verbosity=3 --dtest-collect-only' 2>&1 | tee /tmp/pythontestlist
             TEST_TAG=novnode ./run_dtests.py --vnodes false --nose-options='--verbosity=3 --dtest-collect-only --attr=!resource-intensive' 2>&1 | tee -a /tmp/pythontestlist
             TEST_TAG=offheap ./run_dtests.py --vnodes true --nose-options='--verbosity=3 --dtest-collect-only --attr=!resource-intensive' 2>&1 | tee -a /tmp/pythontestlist
@@ -141,10 +143,10 @@ jobs:
          command: |
             export LANG=en_US.UTF-8
             export JAVA_TOOL_OPTIONS="-Dfile.encoding=UTF8"
-            source ~/.bashrc
+            export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
 
             cd ~/cassandra
-            ${ANT_HOME}/bin/ant testclasslist -Dtest.classlistfile=/tmp/java_tests_${CIRCLE_NODE_INDEX}_final.txt || true
+            ant testclasslist -Dtest.classlistfile=/tmp/java_tests_${CIRCLE_NODE_INDEX}_final.txt || true
          no_output_timeout: 15m
       - run:
           name: Run dtests
@@ -156,7 +158,7 @@ jobs:
 
             source ~/env/bin/activate
             source ~/env_dtest_common
-            source ~/.bashrc
+            export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
 
             cd ~/cassandra-dtest
             mkdir -p /tmp/dtest
@@ -172,7 +174,7 @@ jobs:
           command: |
             source ~/env/bin/activate
             source ~/env_dtest_common
-            source ~/.bashrc
+            export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
 
             cd ~/cassandra-dtest
             export TEST_TAG="novnodes"
@@ -184,7 +186,7 @@ jobs:
           command: |
             source ~/env/bin/activate
             source ~/env_dtest_common
-            source ~/.bashrc
+            export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
 
             cd ~/cassandra-dtest
             export OFFHEAP_MEMTABLES="true"
