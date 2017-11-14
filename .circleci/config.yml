@@ -106,11 +106,9 @@ jobs:
             echo "***java tests***"
             echo $(circleci tests glob "$HOME/cassandra/test/unit/**/*.java")
 
-            for x in $(seq 1 100); do
-                circleci tests glob "$HOME/cassandra/test/unit/**/*.java" | circleci tests split --split-by=timings --timings-type=filename --index=$x --total=100 > /tmp/java_tests_${x}.txt
+            for x in $(seq 1 99); do
+                set -eo pipefail && circleci tests glob "$HOME/cassandra/test/unit/**/*.java" | circleci tests split --split-by=timings --timings-type=filename --index=$x --total=99 > /tmp/java_tests_${x}.txt
                 cat /tmp/java_tests_${x}.txt | cut -c 27-1000000 | grep "Test\.java$" > /tmp/java_tests_${x}_final.txt
-                echo "** /tmp/java_tests_${x}.txt"
-                cat /tmp/java_tests_${x}.txt
                 echo "** /tmp/java_tests_${x}_final.txt"
                 cat /tmp/java_tests_${x}_final.txt
                 echo "***"
