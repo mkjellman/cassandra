@@ -101,11 +101,11 @@ jobs:
           name: Determine Tests to Run
           no_output_timeout: 10m
           command: |
-            #"$HOME/cassandra-dtest/**/*.py"
             export LANG=en_US.UTF-8
             rm -fr ~/cassandra-dtest/upgrade_tests
             echo "***java tests***"
-            circleci tests glob "$HOME/cassandra/test/unit/**" | circleci tests split --split-by=timings --timings-type=filename > /tmp/java_tests.txt
+            echo $(circleci tests glob "$HOME/cassandra/test/unit/**/*.java")
+            circleci tests glob "$HOME/cassandra/test/unit/**/*.java" | circleci tests split --split-by=timings --timings-type=filename > /tmp/java_tests.txt
             cat /tmp/java_tests.txt | cut -c 27-1000000 | grep "Test\.java$" > /tmp/java_tests_final.txt
             cat /tmp/java_tests.txt
             echo "***final java tests***"
