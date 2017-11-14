@@ -106,8 +106,12 @@ jobs:
             echo "***java tests***"
             echo $(circleci tests glob "$HOME/cassandra/test/unit/**/*.java")
 
-            for x in $(seq 1 99); do
-                set -eo pipefail && circleci tests glob "$HOME/cassandra/test/unit/**/*.java" | circleci tests split --split-by=timings --timings-type=filename --index=$x --total=99 > /tmp/java_tests_${x}.txt
+            # get all of our unit test filenames
+            set -eo pipefail && circleci tests glob "$HOME/cassandra/test/unit/**/*.java" > /tmp/all_java_unit_tests.txt
+
+            # split up the unit tests into groups based on the number of containers we have
+            for x in $(seq 0 100); do
+                set -eo pipefail && circleci tests split --split-by=timings --timings-type=filename --index=$x --total=100 /tmp/all_java_unit_tests.txt > /tmp/java_tests_${x}.txt
                 cat /tmp/java_tests_${x}.txt | cut -c 27-1000000 | grep "Test\.java$" > /tmp/java_tests_${x}_final.txt
                 echo "** /tmp/java_tests_${x}_final.txt"
                 cat /tmp/java_tests_${x}_final.txt
