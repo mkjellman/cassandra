@@ -5,16 +5,17 @@ jobs:
     working_directory: ~/
     parallelism: 100
     docker:
-      - image: ubuntu:xenial-20170410
+      - image: kjellman/cassandra-test:0.0.4
     steps:
       - run:
-          name: apt-get install packages
+          name: Setup Enviornment
           command: |
             echo "export LANG=en_US.UTF-8" >> ~/env_dtest_common
-            echo "export JDK_HOME=/usr/lib/jvm/zulu-8-amd64" >> ~/env_dtest_common
+            echo "export JDK_HOME=/usr/local/openjdk8u154-cassandra-b02" >> ~/env_dtest_common
             echo 'export JAVA_HOME=$JDK_HOME/jre' >> ~/env_dtest_common
             echo 'export JAVA8_HOME=$JDK_HOME' >> ~/env_dtest_common
-            echo "export JAVA7_HOME=/usr/lib/jvm/zulu-7-amd64" >> ~/env_dtest_common
+            echo "export JAVA7_HOME=/usr/local/openjdk7u82-cassandra-b02" >> ~/env_dtest_common
+            echo "export ANT_HOME=/usr/local/apache-ant-1.10.1" >> ~/env_dtest_common
             echo "export DEBUG=true" >> ~/env_dtest_common
             echo "export PRINT_DEBUG=true" >> ~/env_dtest_common
             echo 'export allow_root="yes"' >> ~/env_dtest_common
@@ -27,15 +28,10 @@ jobs:
             echo 'export CCM_MAX_HEAP_SIZE="2048M"' >> ~/env_dtest_common
             echo 'export CCM_HEAP_NEWSIZE="200M"' >> ~/env_dtest_common
             export LANG=en_US.UTF-8
-            apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 0x219BD9C9
-            echo 'deb http://repos.azulsystems.com/debian stable main' > /etc/apt/sources.list.d/zulu.list
-            apt-get update
-            apt-get install -y git-core npm python python-pip python-dev zulu-8 zulu-7 ant ant-optional net-tools vim man
-            ln -s /usr/bin/nodejs /usr/bin/node || true
             mkdir ~/.ssh || true
             echo $'Host *\n UserKnownHostsFile /dev/null\n StrictHostKeyChecking no' > ~/.ssh/config
       - run:
-          name: Log environment information
+          name: Log Environment Information
           command: |
               echo '*** id ***'
               id
@@ -54,20 +50,18 @@ jobs:
               echo '*** env ***'
               env
       - run:
-          name: Clone git repos
+          name: Clone Repositories via git
           command: |
             export LANG=en_US.UTF-8
-            git clone --single-branch --depth 1 https://github.com/aweisberg/cassandra-dtest ~/cassandra-dtest
             git clone --single-branch --depth 1 --branch $CIRCLE_BRANCH git://github.com/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME.git ~/cassandra
+            git clone --single-branch --depth 1 git://github.com/apache/cassandra-dtest.git ~/cassandra-dtest
       - run:
-          name: Install junit-merge
-          command: npm install -g junit-merge
-      - run:
-          name: Install virtualenv
-          command: pip install virtualenv 
-      - run:
-          name: Configure virtualenv and python dependencies
+          name: Configure virtualenv and python Dependencies
           command: |
+            # note, this should be super quick as all dependencies should be pre-installed in the docker image
+            # if additional dependencies were added to requirmeents.txt and the docker image hasn't been updated
+            # we'd have to install it here at runtime -- which will make things slow, so do yourself a favor and
+            # rebuild the docker image! (it automatically pulls the latest requirements.txt on build)
             export LANG=en_US.UTF-8
             virtualenv --python=python2 --no-site-packages venv
             source venv/bin/activate
@@ -96,7 +90,7 @@ jobs:
             fi
           no_output_timeout: 20m
       - run:
-          name: Determine tests to run
+          name: Determine Tests to Run
           no_output_timeout: 10m
           command: |
             #"$HOME/cassandra-dtest/**/*.py"
@@ -131,7 +125,7 @@ jobs:
             cat /tmp/offheap_python_tests.txt | tr '\n' ' ' > /tmp/offheap_python_tests_final.txt
             cat /tmp/offheap_python_tests_final.txt
       - run:
-         name: Run unit tests
+         name: Run Unit Tests
          command: |
             export LANG=en_US.UTF-8
             export JAVA_TOOL_OPTIONS="-Dfile.encoding=UTF8"
@@ -140,7 +134,7 @@ jobs:
          no_output_timeout: 15m
       - run:
           name: Run dtests
-          no_output_timeout: 70m
+          no_output_timeout: 100m
           command: |
             source ~/venv/bin/activate
             source ~/env_dtest_common
@@ -150,8 +144,8 @@ jobs:
             ./run_dtests.py --vnodes true --nose-options="--verbosity=3 --with-xunit --nocapture" `cat /tmp/regular_python_tests_final.txt`  2>&1 | tee /tmp/dtest/stdout.txt || true
             cp nosetests.xml nosetests-regular.xml
       - run:
-          name: Run dtests no vnode
-          no_output_timeout: 70m
+          name: Run dtests (without vnodes)
+          no_output_timeout: 100m
           command: |
             source ~/venv/bin/activate
             source ~/env_dtest_common
@@ -161,7 +155,7 @@ jobs:
             ./run_dtests.py --vnodes true --nose-options="--verbosity=3 --with-dtestxunit --nocapture --attr=!resource-intensive" `cat /tmp/novnode_python_tests_final.txt`  2>&1 | tee /tmp/dtest/stdout-novnodes.txt || true
             cp nosetests.xml nosetests-novnode.xml
       - run:
-          name: Run dtests offheap
+          name: Run dtests (off-heap)
           no_output_timeout: 70m
           command: |
             source ~/venv/bin/activate
@@ -171,12 +165,13 @@ jobs:
             ./run_dtests.py --vnodes true --nose-options="--verbosity=3 --with-dtestxunit --nocapture --attr=!resource-intensive" `cat /tmp/offheap_python_tests_final.txt`  2>&1 | tee /tmp/dtest/stdout-offheap.txt || true
             cp nosetests.xml nosetests-offheap.xml
       - run:
-          name: Collect and merge test results
+          name: Collect and Merge Test Results
           command: |
             rm -f $HOME/cassandra-dtest/logs/last || true
             mkdir -p /tmp/results/junit || true
-            junit-merge ~/cassandra/build/test/output/*.xml ~/cassandra-dtest/nosetests-*.xml
-            cp  merged-test-results.xml /tmp/results/junit || true
+	    # we need to merge all of the individual .xml files generated by all of the individual unit tests and dtests (via nose) into a single consolidated result for circleci
+            find ~/cassandra/build/test/output/ ~/cassandra-dtest/ -name "*.xml" -exec python /opt/merge_junit_results.py {} \; > merged-test-results.xml
+            cp merged-test-results.xml /tmp/results/junit || true
 #            mkdir /tmp/dtest_dirs
 #            tar cfz /tmp/dtest_dirs/dirs.tgz /tmp/dtest-*
 #            cp -r /tmp/dtest-* /tmp/dtest_dirs
