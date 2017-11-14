@@ -117,7 +117,7 @@ jobs:
             echo "***python tests***"
             cd cassandra-dtest
             export CASSANDRA_DIR=../cassandra
-            source ~/venv/bin/activate
+            ~/env/bin/activate
             ./run_dtests.py --vnodes true --nose-options='--verbosity=3 --dtest-collect-only' 2>&1 | tee /tmp/pythontestlist
             TEST_TAG=novnode ./run_dtests.py --vnodes false --nose-options='--verbosity=3 --dtest-collect-only --attr=!resource-intensive' 2>&1 | tee -a /tmp/pythontestlist
             TEST_TAG=offheap ./run_dtests.py --vnodes true --nose-options='--verbosity=3 --dtest-collect-only --attr=!resource-intensive' 2>&1 | tee -a /tmp/pythontestlist
@@ -148,7 +148,7 @@ jobs:
           name: Run dtests
           no_output_timeout: 100m
           command: |
-            source ~/venv/bin/activate
+            ~/env/bin/activate
             source ~/env_dtest_common
             cd ~/cassandra-dtest
             mkdir -p /tmp/dtest
@@ -159,7 +159,7 @@ jobs:
           name: Run dtests (without vnodes)
           no_output_timeout: 100m
           command: |
-            source ~/venv/bin/activate
+            ~/env/bin/activate
             source ~/env_dtest_common
             cd ~/cassandra-dtest
             export DISABLE_VNODES="true"
@@ -170,7 +170,7 @@ jobs:
           name: Run dtests (off-heap)
           no_output_timeout: 70m
           command: |
-            source ~/venv/bin/activate
+            ~/env/bin/activate
             source ~/env_dtest_common
             cd ~/cassandra-dtest
             export OFFHEAP_MEMTABLES="true"
