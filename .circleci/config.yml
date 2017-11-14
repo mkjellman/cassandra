@@ -155,6 +155,9 @@ jobs:
             cd ~/cassandra-dtest
             mkdir -p /tmp/dtest
             export NUM_TOKENS="32"
+
+            echo "env: $(env)"
+            echo "** done env"
             ./run_dtests.py --vnodes true --nose-options="--verbosity=3 --with-xunit --nocapture" `cat /tmp/regular_python_tests_final.txt` 2>&1 | tee /tmp/dtest/stdout.txt || true
             cp nosetests.xml nosetests-regular.xml
       - run:
