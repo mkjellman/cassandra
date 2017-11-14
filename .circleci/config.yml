@@ -116,7 +116,7 @@ jobs:
             
             echo "***python tests***"
             cd cassandra-dtest
-            export CASSANDRA_DIR=../cassandra
+            export CASSANDRA_DIR=/home/cassandra/cassandra
             source ~/env/bin/activate
             ./run_dtests.py --vnodes true --nose-options='--verbosity=3 --dtest-collect-only' 2>&1 | tee /tmp/pythontestlist
             TEST_TAG=novnode ./run_dtests.py --vnodes false --nose-options='--verbosity=3 --dtest-collect-only --attr=!resource-intensive' 2>&1 | tee -a /tmp/pythontestlist
@@ -148,12 +148,13 @@ jobs:
           name: Run dtests
           no_output_timeout: 100m
           command: |
+            echo "whoami?? $(whoami)"
             source ~/env/bin/activate
             source ~/env_dtest_common
             cd ~/cassandra-dtest
             mkdir -p /tmp/dtest
             export NUM_TOKENS="32"
-            ./run_dtests.py --vnodes true --nose-options="--verbosity=3 --with-xunit --nocapture" `cat /tmp/regular_python_tests_final.txt`  2>&1 | tee /tmp/dtest/stdout.txt || true
+            ./run_dtests.py --vnodes true --nose-options="--verbosity=3 --with-xunit --nocapture" `cat /tmp/regular_python_tests_final.txt` 2>&1 | tee /tmp/dtest/stdout.txt || true
             cp nosetests.xml nosetests-regular.xml
       - run:
           name: Run dtests (without vnodes)
