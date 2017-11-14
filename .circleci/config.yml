@@ -118,8 +118,12 @@ jobs:
                 if [ "${RETURN}" -ne "0" ]; then
                     continue
                 fi
+                cat /tmp/java_tests_${x}.txt | cut -c 27-1000000
+                RETURN="$?"
+                if [ "${RETURN}" -ne "0" ]; then
+                    continue
+                fi
                 set -eo pipefail && cat /tmp/java_tests_${x}.txt | cut -c 27-1000000 | grep "Test\.java$" > /tmp/java_tests_${x}_final.txt
-                set -eo pipefail
                 if [ ! -f /tmp/java_tests_${x}_final.txt ]; then
                     continue
                 fi
