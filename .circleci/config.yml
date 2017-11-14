@@ -118,7 +118,7 @@ jobs:
                 if [ "${RETURN}" -ne "0" ]; then
                     break
                 fi
-                set -eo pipefail && cat /tmp/java_tests_${x}.txt | cut -c 27-1000000 | grep "Test\.java$" > /tmp/java_tests_${x}_final.txt
+                set -eo pipefail && cat /tmp/java_tests_${x}.txt | set -eo pipefail && cut -c 27-1000000 | set -eo pipefail && grep "Test\.java$" > /tmp/java_tests_${x}_final.txt
                 echo "** after cat and cut ${x}"
                 echo "** /tmp/java_tests_${x}_final.txt"
                 cat /tmp/java_tests_${x}_final.txt
