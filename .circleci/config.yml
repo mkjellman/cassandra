@@ -113,7 +113,7 @@ jobs:
             for x in $(seq 0 100); do
                 set -eo pipefail && circleci tests split --split-by=timings --timings-type=filename --index=$x --total=100 /tmp/all_java_unit_tests.txt > /tmp/java_tests_${x}.txt
                 RETURN="$?"
-                if [ "${RETURN}" -eq "0" ]; then
+                if [ "${RETURN}" -ne "0" ]; then
                     break
                 fi
                 cat /tmp/java_tests_${x}.txt | cut -c 27-1000000 | grep "Test\.java$" > /tmp/java_tests_${x}_final.txt
