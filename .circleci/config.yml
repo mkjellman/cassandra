@@ -69,8 +69,8 @@ jobs:
             # we'd have to install it here at runtime -- which will make things slow, so do yourself a favor and
             # rebuild the docker image! (it automatically pulls the latest requirements.txt on build)
             export LANG=en_US.UTF-8
-            source ~/.bashrc
             source ~/env/bin/activate
+            source ~/.bashrc
             export CASS_DRIVER_NO_EXTENSIONS=true
             export CASS_DRIVER_NO_CYTHON=true
             pip install -r ~/cassandra-dtest/requirements.txt
@@ -116,8 +116,8 @@ jobs:
             echo "***python tests***"
             cd cassandra-dtest
             export CASSANDRA_DIR=/home/cassandra/cassandra
-            source ~/.bashrc
             source ~/env/bin/activate
+            source ~/.bashrc
             ./run_dtests.py --vnodes true --nose-options='--verbosity=3 --dtest-collect-only' 2>&1 | tee /tmp/pythontestlist
             TEST_TAG=novnode ./run_dtests.py --vnodes false --nose-options='--verbosity=3 --dtest-collect-only --attr=!resource-intensive' 2>&1 | tee -a /tmp/pythontestlist
             TEST_TAG=offheap ./run_dtests.py --vnodes true --nose-options='--verbosity=3 --dtest-collect-only --attr=!resource-intensive' 2>&1 | tee -a /tmp/pythontestlist
@@ -154,9 +154,10 @@ jobs:
             cat /tmp/regular_python_tests_final.txt
             echo "*** kj ***"
 
-            source ~/.bashrc
             source ~/env/bin/activate
             source ~/env_dtest_common
+            source ~/.bashrc
+
             cd ~/cassandra-dtest
             mkdir -p /tmp/dtest
             export NUM_TOKENS="32"
@@ -169,9 +170,10 @@ jobs:
           name: Run dtests (without vnodes)
           no_output_timeout: 100m
           command: |
-            source ~/.bashrc
             source ~/env/bin/activate
             source ~/env_dtest_common
+            source ~/.bashrc
+
             cd ~/cassandra-dtest
             export TEST_TAG="novnodes"
             ./run_dtests.py --vnodes false --nose-options="--verbosity=3 --with-dtestxunit --nocapture --attr=!resource-intensive" `cat /tmp/novnode_python_tests_final.txt`  2>&1 | tee /tmp/dtest/stdout-novnodes.txt || true
@@ -180,9 +182,10 @@ jobs:
           name: Run dtests (off-heap)
           no_output_timeout: 70m
           command: |
-            source ~/.bashrc
             source ~/env/bin/activate
             source ~/env_dtest_common
+            source ~/.bashrc
+
             cd ~/cassandra-dtest
             export OFFHEAP_MEMTABLES="true"
             ./run_dtests.py --vnodes true --nose-options="--verbosity=3 --with-dtestxunit --nocapture --attr=!resource-intensive" `cat /tmp/offheap_python_tests_final.txt`  2>&1 | tee /tmp/dtest/stdout-offheap.txt || true
