@@ -27,8 +27,8 @@ jobs:
             echo "export PYTHONUNBUFFERED=true" >> ~/env_dtest_common
             echo "export CASS_DRIVER_NO_EXTENSIONS=true" >> ~/env_dtest_common
             echo "export CASS_DRIVER_NO_CYTHON=true" >> ~/env_dtest_common
-            echo 'export CCM_MAX_HEAP_SIZE="4096M"' >> ~/env_dtest_common
-            echo 'export CCM_HEAP_NEWSIZE="512M"' >> ~/env_dtest_common
+            echo 'export CCM_MAX_HEAP_SIZE="3072M"' >> ~/env_dtest_common
+            echo 'export CCM_HEAP_NEWSIZE="256M"' >> ~/env_dtest_common
             export LANG=en_US.UTF-8
             mkdir ~/.ssh || true
             echo $'Host *\n UserKnownHostsFile /dev/null\n StrictHostKeyChecking no' > ~/.ssh/config
