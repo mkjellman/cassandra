@@ -150,7 +150,7 @@ jobs:
          no_output_timeout: 15m
       - run:
           name: Run dtests
-          no_output_timeout: 60m
+          no_output_timeout: 30m
           command: |
             echo "cat /tmp/regular_python_tests_final.txt"
             cat /tmp/regular_python_tests_final.txt
@@ -170,7 +170,7 @@ jobs:
             cp nosetests.xml nosetests-regular.xml
       - run:
           name: Run dtests (without vnodes)
-          no_output_timeout: 60m
+          no_output_timeout: 30m
           command: |
             source ~/env/bin/activate
             source ~/env_dtest_common
@@ -182,7 +182,7 @@ jobs:
             cp nosetests.xml nosetests-novnode.xml
       - run:
           name: Run dtests (off-heap)
-          no_output_timeout: 60m
+          no_output_timeout: 30m
           command: |
             source ~/env/bin/activate
             source ~/env_dtest_common
