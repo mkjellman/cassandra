@@ -198,7 +198,6 @@ jobs:
             cat /tmp/regular_python_tests_final.txt
 
             source ~/env/bin/activate
-            source ~/env_dtest_common
             export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
 
             cd ~/cassandra-dtest
@@ -214,7 +213,6 @@ jobs:
           no_output_timeout: 30m
           command: |
             source ~/env/bin/activate
-            source ~/env_dtest_common
             export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
 
             cd ~/cassandra-dtest
@@ -226,7 +224,6 @@ jobs:
           no_output_timeout: 30m
           command: |
             source ~/env/bin/activate
-            source ~/env_dtest_common
             export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
 
             cd ~/cassandra-dtest
