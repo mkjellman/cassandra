@@ -243,5 +243,9 @@ workflows:
     build_and_run_tests:
         jobs:
             - build
-            - unit_tests
-            - dtests
+            - unit_tests:
+                  requires:
+                      - build
+            - dtests:
+                  requires:
+                      - unit_tests
