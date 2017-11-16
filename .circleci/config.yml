@@ -72,9 +72,9 @@ jobs:
             fi
           no_output_timeout: 20m
       - persist_to_workspace:
-            root: workspace
+            root: /home/cassandra
             paths:
-                - /home/cassandra/cassandra
+                - cassandra
   unit_tests:
     resource_class: xlarge
     parallelism: 100
@@ -86,7 +86,7 @@ jobs:
             <<: *env_vars
     steps:
       - attach_workspace:
-          at: /home/cassandra/cassandra
+          at: /home/cassandra
       - run:
           name: Determine Tests to Run
           no_output_timeout: 10m
@@ -136,7 +136,7 @@ jobs:
             <<: *env_vars
     steps:
       - attach_workspace:
-          at: /home/cassandra/cassandra
+          at: /home/cassandra
       - run:
           name: Clone Cassandra dtest Repository (via git)
           command: |
