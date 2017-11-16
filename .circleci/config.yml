@@ -20,7 +20,6 @@ jobs:
             echo "export JAVA7_HOME=/usr/local/openjdk7u82-cassandra-b02" >> ~/env_dtest_common
             echo "export DEBUG=true" >> ~/env_dtest_common
             echo "export PRINT_DEBUG=true" >> ~/env_dtest_common
-            echo 'export allow_root="yes"' >> ~/env_dtest_common
             echo "export KEEP_TEST_DIR=true" >> ~/env_dtest_common
             echo "export CASSANDRA_DIR=$HOME/cassandra" >> ~/env_dtest_common
             echo "export PYTHONIOENCODING="utf-8"" >> ~/env_dtest_common
