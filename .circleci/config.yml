@@ -75,6 +75,7 @@ jobs:
             root: /home/cassandra
             paths:
                 - cassandra
+                - .m2
   unit_tests:
     resource_class: xlarge
     parallelism: 100
