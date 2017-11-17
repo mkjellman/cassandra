@@ -173,8 +173,8 @@ jobs:
             source ~/env/bin/activate
             export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
 
-            ./run_dtests.py --vnodes true --nose-options='--verbosity=3 --dtest-collect-only' 2>&1 | grep -v "upgrade_tests." | tee /tmp/pythontestlist
-            cat /tmp/pythontestlist | grep "... ok" | rev | cut -c 8- | rev > /tmp/testlist_trimmed
+            ./run_dtests.py --vnodes true --nose-options='--verbosity=3 --dtest-collect-only' 2>&1 | tee /tmp/pythontestlist
+            cat /tmp/pythontestlist | grep -v "upgrade_tests." | grep "... ok" | rev | cut -c 8- | rev > /tmp/testlist_trimmed
             cat /tmp/testlist_trimmed | circleci tests split --split-by=timings --timings-type=classname > /tmp/python_tests.txt
             cat /tmp/python_tests.txt
             echo "***regular python tests***"
@@ -183,8 +183,8 @@ jobs:
             cat /tmp/regular_python_tests_final.txt
             echo "***novnode python tests***"
             rm /tmp/pythontestlist || true
-            TEST_TAG=novnode ./run_dtests.py --vnodes false --nose-options='--verbosity=3 --dtest-collect-only --attr=!resource-intensive' 2>&1 | grep -v "upgrade_tests." | tee -a /tmp/pythontestlist
-            cat /tmp/python_tests.txt | grep "\-novnode" | rev | cut -c 9- | rev > /tmp/novnode_python_tests.txt
+            TEST_TAG=novnode ./run_dtests.py --vnodes false --nose-options='--verbosity=3 --dtest-collect-only --attr=!resource-intensive' 2>&1 | tee -a /tmp/pythontestlist
+            cat /tmp/python_tests.txt | grep -v "upgrade_tests." | grep "\-novnode" | rev | cut -c 9- | rev > /tmp/novnode_python_tests.txt
             cat /tmp/novnode_python_tests.txt | tr '\n' ' ' > /tmp/novnode_python_tests_final.txt
             cat /tmp/novnode_python_tests_final.txt
             # echo "***offheap python tests***"
