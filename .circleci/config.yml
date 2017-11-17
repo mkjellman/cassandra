@@ -9,6 +9,7 @@ env_vars: &env_vars
     PRINT_DEBUG: true
     KEEP_TEST_DIR: true
     CASSANDRA_DIR: /home/cassandra/cassandra
+    DEFAULT_DIR: /home/cassandra/cassandra-dtest
     PYTHONIOENCODING: utf-8
     PYTHONUNBUFFERED: true
     CASS_DRIVER_NO_EXTENSIONS: true
@@ -210,7 +211,7 @@ jobs:
             ./run_dtests.py --vnodes true --nose-options="--verbosity=3 --with-xunit --nocapture" `cat /tmp/regular_python_tests_final.txt` 2>&1 | tee /tmp/dtest/stdout.txt || true
 
             # store the test results somewhere where we can pick them up
-            cp nosetests.xml nosetests-regular.xml
+            mv nosetests.xml nosetests-regular.xml
             mkdir -p /tmp/results/ || true
             find ~/cassandra-dtest/ -name "*.xml" -exec cp {} /tmp/results/ \; 
       - run:
@@ -229,7 +230,7 @@ jobs:
             mkdir -p /tmp/results/ || true
             find ~/cassandra-dtest/ -name "*.xml" -exec cp {} /tmp/results/ \; 
       - store_test_results:
-            path: /tmp/results/
+          path: /tmp/results/
       - store_artifacts:
           path: /tmp/dtest
           destination: dtest
