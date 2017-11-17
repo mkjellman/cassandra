@@ -174,8 +174,6 @@ jobs:
             export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
 
             ./run_dtests.py --vnodes true --nose-options='--verbosity=3 --dtest-collect-only' 2>&1 | grep -v "upgrade_tests." | tee /tmp/pythontestlist
-            TEST_TAG=novnode ./run_dtests.py --vnodes false --nose-options='--verbosity=3 --dtest-collect-only --attr=!resource-intensive' 2>&1 | tee -a /tmp/pythontestlist
-            TEST_TAG=offheap ./run_dtests.py --vnodes true --nose-options='--verbosity=3 --dtest-collect-only --attr=!resource-intensive' 2>&1 | tee -a /tmp/pythontestlist
             cat /tmp/pythontestlist | grep "... ok" | rev | cut -c 8- | rev > /tmp/testlist_trimmed
             cat /tmp/testlist_trimmed | circleci tests split --split-by=timings --timings-type=classname > /tmp/python_tests.txt
             cat /tmp/python_tests.txt
@@ -184,13 +182,17 @@ jobs:
             cat /tmp/regular_python_tests.txt | tr '\n' ' ' > /tmp/regular_python_tests_final.txt
             cat /tmp/regular_python_tests_final.txt
             echo "***novnode python tests***"
+            rm /tmp/pythontestlist || true
+            TEST_TAG=novnode ./run_dtests.py --vnodes false --nose-options='--verbosity=3 --dtest-collect-only --attr=!resource-intensive' 2>&1 | grep -v "upgrade_tests." | tee -a /tmp/pythontestlist
             cat /tmp/python_tests.txt | grep "\-novnode" | rev | cut -c 9- | rev > /tmp/novnode_python_tests.txt
             cat /tmp/novnode_python_tests.txt | tr '\n' ' ' > /tmp/novnode_python_tests_final.txt
             cat /tmp/novnode_python_tests_final.txt
-            echo "***offheap python tests***"
-            cat /tmp/python_tests.txt | grep "\-offheap" | rev | cut -c 9- | rev > /tmp/offheap_python_tests.txt
-            cat /tmp/offheap_python_tests.txt | tr '\n' ' ' > /tmp/offheap_python_tests_final.txt
-            cat /tmp/offheap_python_tests_final.txt
+            # echo "***offheap python tests***"
+            # rm /tmp/pythontestlist || true
+            # TEST_TAG=offheap ./run_dtests.py --vnodes true --nose-options='--verbosity=3 --dtest-collect-only --attr=!resource-intensive' 2>&1 | grep -v "upgrade_tests." | tee -a /tmp/pythontestlist
+            # cat /tmp/python_tests.txt | grep "\-offheap" | rev | cut -c 9- | rev > /tmp/offheap_python_tests.txt
+            # cat /tmp/offheap_python_tests.txt | tr '\n' ' ' > /tmp/offheap_python_tests_final.txt
+            # cat /tmp/offheap_python_tests_final.txt
       - run:
           name: Run dtests
           no_output_timeout: 30m
