@@ -208,7 +208,11 @@ jobs:
             echo "env: $(env)"
             echo "** done env"
             ./run_dtests.py --vnodes true --nose-options="--verbosity=3 --with-xunit --nocapture" `cat /tmp/regular_python_tests_final.txt` 2>&1 | tee /tmp/dtest/stdout.txt || true
+
+            # store the test results somewhere where we can pick them up
             cp nosetests.xml nosetests-regular.xml
+            mkdir -p /tmp/results/ || true
+            find ~/cassandra-dtest/ -name "*.xml" -exec cp {} /tmp/results/ \; 
       - run:
           name: Run dtests (without vnodes)
           no_output_timeout: 30m
@@ -218,10 +222,14 @@ jobs:
 
             cd ~/cassandra-dtest
             export TEST_TAG="novnodes"
-            ./run_dtests.py --vnodes false --nose-options="--verbosity=3 --with-dtestxunit --nocapture --attr=!resource-intensive" `cat /tmp/novnode_python_tests_final.txt`  2>&1 | tee /tmp/dtest/stdout-novnodes.txt || true
-            cp nosetests.xml nosetests-novnode.xml
+            ./run_dtests.py --vnodes false --nose-options="--verbosity=3 --with-dtestxunit --nocapture --attr=!resource-intensive" `cat /tmp/novnode_python_tests_final.txt` 2>&1 | tee /tmp/dtest/stdout-novnodes.txt || true
+
+            # store the test results somewhere where we can pick them up
+            mv nosetests.xml nosetests-novnode.xml
+            mkdir -p /tmp/results/ || true
+            find ~/cassandra-dtest/ -name "*.xml" -exec cp {} /tmp/results/ \; 
       - store_test_results:
-            path: ~/cassandra-dtest/
+            path: /tmp/results/
       - store_artifacts:
           path: /tmp/dtest
           destination: dtest
