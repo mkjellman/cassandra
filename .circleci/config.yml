@@ -230,6 +230,8 @@ jobs:
             export OFFHEAP_MEMTABLES="true"
             ./run_dtests.py --vnodes true --nose-options="--verbosity=3 --with-dtestxunit --nocapture --attr=!resource-intensive" `cat /tmp/offheap_python_tests_final.txt`  2>&1 | tee /tmp/dtest/stdout-offheap.txt || true
             cp nosetests.xml nosetests-offheap.xml
+      - store_test_results:
+            path: ~/cassandra-dtest/
       - store_artifacts:
           path: /tmp/dtest
           destination: dtest
