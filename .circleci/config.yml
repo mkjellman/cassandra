@@ -15,7 +15,7 @@ env_vars: &env_vars
     CASS_DRIVER_NO_CYTHON: true
     CCM_MAX_HEAP_SIZE: 3072M
     CCM_HEAP_NEWSIZE: 256M
-    RUN_STATUS UPGRADE MATRIX: true
+    RUN_STATUS_UPGRADE_MATRIX: true
 version: 2
 jobs:
   build:
