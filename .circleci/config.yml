@@ -17,6 +17,7 @@ env_vars: &env_vars
     CCM_MAX_HEAP_SIZE: 3072M
     CCM_HEAP_NEWSIZE: 256M
     RUN_STATUS_UPGRADE_MATRIX: true
+    LOCAL_GIT_REPO: /home/cassandra/cassandra/$CIRCLE_BRANCH
 version: 2
 jobs:
   build:
