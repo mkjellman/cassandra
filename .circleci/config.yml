@@ -19,7 +19,7 @@ env_vars: &env_vars
 version: 2
 jobs:
   build:
-    resource_class: xlarge
+    resource_class: medium
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
     docker:
@@ -78,8 +78,8 @@ jobs:
                 - cassandra
                 - .m2
   unit_tests:
-    resource_class: xlarge
-    parallelism: 100
+    resource_class: medium
+    parallelism: 4
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
     docker:
@@ -128,8 +128,8 @@ jobs:
           path: ~/cassandra/build/test/logs
           destination: logs
   dtests:
-    resource_class: xlarge
-    parallelism: 100
+    resource_class: medium
+    parallelism: 4
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
     docker:
@@ -222,6 +222,11 @@ jobs:
           name: Run dtests (without vnodes)
           no_output_timeout: 30m
           command: |
+            # for now require at least 50 circleci containers to run the dtests (with less resources the tests won't produce reliable results or will fail to complete) 
+            if [ ${CIRCLE_NODE_TOTAL} -lt 50 ]; then
+                return 0
+            fi
+
             source ~/env/bin/activate
             export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
 
