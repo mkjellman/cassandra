@@ -14,7 +14,7 @@ env_vars: &env_vars
     PYTHONUNBUFFERED: true
     CASS_DRIVER_NO_EXTENSIONS: true
     CASS_DRIVER_NO_CYTHON: true
-    CCM_MAX_HEAP_SIZE: 3072M
+    CCM_MAX_HEAP_SIZE: 1024M
     CCM_HEAP_NEWSIZE: 256M
 version: 2
 jobs:
