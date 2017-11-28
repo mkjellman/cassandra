@@ -224,7 +224,7 @@ jobs:
           command: |
             # for now require at least 50 circleci containers to run the dtests (with less resources the tests won't produce reliable results or will fail to complete) 
             if [ ${CIRCLE_NODE_TOTAL} -lt 50 ]; then
-                return 0
+                exit 0
             fi
 
             source ~/env/bin/activate
