@@ -223,21 +223,19 @@ jobs:
           no_output_timeout: 30m
           command: |
             # for now require at least 50 circleci containers to run the dtests (with less resources the tests won't produce reliable results or will fail to complete) 
-            if [ ${CIRCLE_NODE_TOTAL} -lt 50 ]; then
-                exit 0
+            if [ $CIRCLE_NODE_TOTAL -gt 50 ]; then
+                source ~/env/bin/activate
+                export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
+
+                cd ~/cassandra-dtest
+                export TEST_TAG="novnodes"
+                ./run_dtests.py --vnodes false --nose-options="--verbosity=3 --with-dtestxunit --nocapture --attr=!resource-intensive" `cat /tmp/novnode_python_tests_final.txt` 2>&1 | tee /tmp/dtest/stdout-novnodes.txt || true
+
+                # store the test results somewhere where we can pick them up
+                mv nosetests.xml nosetests-novnode.xml
+                mkdir -p /tmp/results/ || true
+                find ~/cassandra-dtest/ -name "*.xml" -exec cp {} /tmp/results/ \; 
             fi
-
-            source ~/env/bin/activate
-            export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
-
-            cd ~/cassandra-dtest
-            export TEST_TAG="novnodes"
-            ./run_dtests.py --vnodes false --nose-options="--verbosity=3 --with-dtestxunit --nocapture --attr=!resource-intensive" `cat /tmp/novnode_python_tests_final.txt` 2>&1 | tee /tmp/dtest/stdout-novnodes.txt || true
-
-            # store the test results somewhere where we can pick them up
-            mv nosetests.xml nosetests-novnode.xml
-            mkdir -p /tmp/results/ || true
-            find ~/cassandra-dtest/ -name "*.xml" -exec cp {} /tmp/results/ \; 
       - store_test_results:
           path: /tmp/results/
       - store_artifacts:
