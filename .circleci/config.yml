@@ -1,4 +1,4 @@
-env_vars: &env_vars
+default_env_vars: &default_env_vars
     JAVA_HOME: /usr/local/openjdk8u154-cassandra-b02
     ANT_HOME: /usr/local/apache-ant-1.10.1
     LANG: en_US.UTF-8
@@ -16,10 +16,49 @@ env_vars: &env_vars
     CASS_DRIVER_NO_CYTHON: true
     CCM_MAX_HEAP_SIZE: 1024M
     CCM_HEAP_NEWSIZE: 256M
+# For environments with xlarge instances, use more memory
+high_capacity_env_vars: &high_capacity_env_vars
+    <<: *default_env_vars
+    CCM_MAX_HEAP_SIZE: 3072M
+# Settings for users who do not have a paid CircleCI account
+default_env_settings: &default_env_settings
+    resource_class: medium
+    parallelism: 4
+# Settings for users with high-capacity, paid CircleCI account
+high_capacity_env_settings: &high_capacity_env_settings
+    resource_class: xlarge
+    parallelism: 90
+default_jobs: &default_jobs
+        jobs:
+            - build
+            - unit_tests:
+                  requires:
+                      - build
+with_dtests_jobs: &with_dtest_jobs 
+        jobs:
+            - build
+            - unit_tests:
+                  requires:
+                      - build
+            - dtests:
+                  requires:
+                      - unit_tests
+# Set env_settings, env_vars, and workflows/build_and_run_tests based on environment
+env_settings: &env_settings
+    # <<: *default_env_settings
+    <<: *high_capacity_env_settings
+env_vars: &env_vars
+    # <<: *default_env_vars
+    <<: *high_capacity_env_vars
+workflows:
+    version: 2
+    # build_and_run_tests: *default_jobs
+    build_and_run_tests: *with_dtest_jobs
 version: 2
 jobs:
   build:
-    resource_class: medium
+    <<: *env_settings
+    parallelism: 1 # This job doesn't benefit from parallelism
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
     docker:
@@ -78,8 +117,7 @@ jobs:
                 - cassandra
                 - .m2
   unit_tests:
-    resource_class: medium
-    parallelism: 4
+    <<: *env_settings
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
     docker:
@@ -128,8 +166,7 @@ jobs:
           path: ~/cassandra/build/test/logs
           destination: logs
   dtests:
-    resource_class: medium
-    parallelism: 4
+    <<: *env_settings
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
     docker:
@@ -244,14 +281,3 @@ jobs:
       - store_artifacts:
           path: ~/cassandra-dtest/logs
           destination: dtest_logs
-workflows:
-    version: 2
-    build_and_run_tests:
-        jobs:
-            - build
-            - unit_tests:
-                  requires:
-                      - build
-            - dtests:
-                  requires:
-                      - unit_tests
