@@ -62,7 +62,7 @@ jobs:
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
     docker:
-      - image: kjellman/cassandra-test:0.1.2
+      - image: kjellman/cassandra-test:0.1.3
         environment:
             <<: *env_vars
     steps:
@@ -242,6 +242,7 @@ jobs:
 
             source ~/env/bin/activate
             export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
+            export IP_PREFIX="127.0.${CIRCLE_NODE_INDEX}."
 
             cd ~/cassandra-dtest
             mkdir -p /tmp/dtest
@@ -266,6 +267,7 @@ jobs:
 
                 cd ~/cassandra-dtest
                 export TEST_TAG="novnodes"
+                export IP_PREFIX="127.0.${CIRCLE_NODE_INDEX}."
                 ./run_dtests.py --vnodes false --nose-options="--verbosity=3 --with-dtestxunit --nocapture --attr=!resource-intensive" `cat /tmp/novnode_python_tests_final.txt` 2>&1 | tee /tmp/dtest/stdout-novnodes.txt || true
 
                 # store the test results somewhere where we can pick them up
