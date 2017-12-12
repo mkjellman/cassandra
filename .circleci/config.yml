@@ -233,8 +233,8 @@ jobs:
           name: Run dtests
           no_output_timeout: 30m
           command: |
-            echo "cat /tmp/split_dtest_tests_with_vnodes.txt"
-            cat /tmp/split_dtest_tests_with_vnodes.txt
+            echo "cat /tmp/split_dtest_tests_with_vnodes_final.txt"
+            cat /tmp/split_dtest_tests_with_vnodes_final.txt
 
             source ~/env/bin/activate
             export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
