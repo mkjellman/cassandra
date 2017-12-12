@@ -42,6 +42,12 @@ with_dtests_jobs: &with_dtest_jobs
             - dtests:
                   requires:
                       - unit_tests
+with_dtest_jobs_only: &with_dtest_jobs_only
+        jobs:
+            - build
+            - dtests:
+                  requires:
+                      - build
 # Set env_settings, env_vars, and workflows/build_and_run_tests based on environment
 env_settings: &env_settings
     # <<: *default_env_settings
@@ -52,7 +58,7 @@ env_vars: &env_vars
 workflows:
     version: 2
     # build_and_run_tests: *default_jobs
-    build_and_run_tests: *with_dtest_jobs
+    build_and_run_tests: *with_dtest_jobs_only
 version: 2
 jobs:
   build:
@@ -120,7 +126,7 @@ jobs:
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
     docker:
-      - image: kjellman/cassandra-test:0.1.2
+      - image: kjellman/cassandra-test:0.2.0
         environment:
             <<: *env_vars
     steps:
@@ -169,7 +175,7 @@ jobs:
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
     docker:
-      - image: kjellman/cassandra-test:0.1.2
+      - image: kjellman/cassandra-test:0.2.0
         environment:
             <<: *env_vars
     steps:
