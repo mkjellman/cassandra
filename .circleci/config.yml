@@ -217,14 +217,14 @@ jobs:
             export PRINT_DEBUG=false 
 
             echo "***regular python tests***"
-            set -eo pipefail && ./run_dtests.py --use-vnodes --dtest-print-tests-only --skip-resource-intensive-tests 2>&1 | tee /tmp/all_dtest_tests_with_vnodes
+            set -eo pipefail && ./run_dtests.py --use-vnodes --dtest-print-tests-only --skip-resource-intensive-tests --dtest-print-tests-output=/tmp/all_dtest_tests_with_vnodes
             set -eo pipefail && circleci tests split --split-by=timings --timings-type=classname /tmp/all_dtest_tests_with_vnodes > /tmp/split_dtest_tests_with_vnodes.txt
             cat /tmp/split_dtest_tests_with_vnodes.txt | tr '\n' ' ' > /tmp/split_dtest_tests_with_vnodes_final.txt
             # cat /tmp/split_dtest_tests_with_vnodes.txt
             cat /tmp/split_dtest_tests_with_vnodes_final.txt
 
             echo "***novnode python tests***"
-            ./run_dtests.py --dtest-print-tests-only --skip-resource-intensive-tests 2>&1 | tee /tmp/all_dtest_tests_without_vnodes
+            ./run_dtests.py --dtest-print-tests-only --skip-resource-intensive-tests --dtest-print-tests-output=/tmp/all_dtest_tests_without_vnodes
             set -eo pipefail && circleci tests split --split-by=timings --timings-type=classname /tmp/all_dtest_tests_without_vnodes > /tmp/split_dtest_tests_without_vnodes.txt
             cat /tmp/split_dtest_tests_without_vnodes.txt | tr '\n' ' ' > /tmp/split_dtest_tests_without_vnodes_final.txt
             # cat /tmp/split_dtest_tests_without_vnodes.txt
