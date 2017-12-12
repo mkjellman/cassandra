@@ -217,14 +217,16 @@ jobs:
             echo "***regular python tests***"
             set -eo pipefail && ./run_dtests.py --use-vnodes --dtest-print-tests-only --skip-resource-intensive-tests 2>&1 | tee /tmp/all_dtest_tests_with_vnodes
             set -eo pipefail && circleci tests split --split-by=timings --timings-type=classname /tmp/all_dtest_tests_with_vnodes > /tmp/split_dtest_tests_with_vnodes.txt
-            cat /tmp/all_dtest_tests_with_vnodes
+            cat /tmp/split_dtest_tests_with_vnodes.txt | tr '\n' ' ' > /tmp/split_dtest_tests_with_vnodes_final.txt
             cat /tmp/split_dtest_tests_with_vnodes.txt
+            cat /tmp/split_dtest_tests_with_vnodes_final.txt
 
             echo "***novnode python tests***"
             ./run_dtests.py --dtest-print-tests-only --skip-resource-intensive-tests 2>&1 | tee -a /tmp/all_dtest_tests_without_vnodes
             set -eo pipefail && circleci tests split --split-by=timings --timings-type=classname /tmp/all_dtest_tests_without_vnodes > /tmp/split_dtest_tests_without_vnodes.txt
-            cat /tmp/all_dtest_tests_without_vnodes
+            cat /tmp/split_dtest_tests_without_vnodes.txt | tr '\n' ' ' > /tmp/split_dtest_tests_without_vnodes_final.txt
             cat /tmp/split_dtest_tests_without_vnodes.txt
+            cat /tmp/split_dtest_tests_without_vnodes_final.txt
       - run:
           name: Run dtests
           no_output_timeout: 30m
@@ -241,7 +243,7 @@ jobs:
             echo "env: $(env)"
             echo "** done env"
             mkdir -p /tmp/results/ || true
-            pytest --use-vnodes --num-tokens=32 --junit-xml=/tmp/results/pytest_result_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests `cat /tmp/split_dtest_tests_with_vnodes.txt` 2>&1 | tee /tmp/dtest/stdout.txt || true
+            pytest --use-vnodes --num-tokens=32 --junit-xml=/tmp/results/pytest_result_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests `cat /tmp/split_dtest_tests_with_vnodes_final.txt` 2>&1 | tee /tmp/dtest/stdout.txt || true
       - run:
           name: Run dtests (without vnodes)
           no_output_timeout: 30m
@@ -254,7 +256,7 @@ jobs:
                 cd ~/cassandra-dtest
                 export TEST_TAG="novnodes"
                 mkdir -p /tmp/results/ || true
-            	pytest --junit-xml=/tmp/results/pytest_result_novnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests `cat /tmp/split_dtest_tests_without_vnodes.txt` 2>&1 | tee /tmp/dtest/stdout-novnodes.txt || true
+            	pytest --junit-xml=/tmp/results/pytest_result_novnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests `cat /tmp/split_dtest_tests_without_vnodes_final.txt` 2>&1 | tee /tmp/dtest/stdout-novnodes.txt || true
             fi
       - store_test_results:
           path: /tmp/results/
