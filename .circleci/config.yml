@@ -8,7 +8,6 @@ default_env_vars: &default_env_vars
     DEBUG: true
     PRINT_DEBUG: true
     KEEP_TEST_DIR: true
-    CASSANDRA_DIR: /home/cassandra/cassandra
     DEFAULT_DIR: /home/cassandra/cassandra-dtest
     PYTHONIOENCODING: utf-8
     PYTHONUNBUFFERED: true
@@ -62,7 +61,7 @@ jobs:
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
     docker:
-      - image: kjellman/cassandra-test:0.1.3
+      - image: kjellman/cassandra-test:0.2.0
         environment:
             <<: *env_vars
     steps:
@@ -180,7 +179,7 @@ jobs:
           name: Clone Cassandra dtest Repository (via git)
           command: |
             export LANG=en_US.UTF-8
-            git clone --single-branch --depth 1 git://github.com/mkjellman/cassandra-dtest.git ~/cassandra-dtest
+            git clone --single-branch --branch dtests_on_pytest --depth 1 git://github.com/mkjellman/cassandra-dtest.git ~/cassandra-dtest
       - run:
           name: Configure virtualenv and python Dependencies
           command: |
@@ -193,8 +192,8 @@ jobs:
             export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
             export CASS_DRIVER_NO_EXTENSIONS=true
             export CASS_DRIVER_NO_CYTHON=true
-            pip install -r ~/cassandra-dtest/requirements.txt
-            pip freeze
+            pip3 install -r ~/cassandra-dtest/requirements.txt
+            pip3 freeze
       - run:
           name: Determine Tests to Run
           no_output_timeout: 10m
@@ -206,56 +205,37 @@ jobs:
             export LANG=en_US.UTF-8
             echo "***python tests***"
             cd cassandra-dtest
-            export CASSANDRA_DIR=/home/cassandra/cassandra
             source ~/env/bin/activate
             export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
 
             echo "***regular python tests***"
-            set -eo pipefail && ./run_dtests.py --vnodes true --nose-options='--verbosity=3 --dtest-collect-only' 2>&1 | tee /tmp/pythontestlist
-            set -eo pipefail && cat /tmp/pythontestlist | grep -v 'upgrade_tests' | grep "... ok" | rev | cut -c 8- | rev > /tmp/testlist_trimmed
-            set -eo pipefail && circleci tests split --split-by=timings --timings-type=classname /tmp/testlist_trimmed > /tmp/python_tests.txt
-            cat /tmp/python_tests.txt
-            cat /tmp/python_tests.txt | grep -v "\-novnode" | grep -v "\-offheap" > /tmp/regular_python_tests.txt
-            cat /tmp/regular_python_tests.txt | tr '\n' ' ' > /tmp/regular_python_tests_final.txt
-            cat /tmp/regular_python_tests_final.txt
+            set -eo pipefail && ./run_dtests.py --use-vnodes --dtest-print-tests-only --skip-resource-intensive-tests 2>&1 | tee /tmp/all_dtest_tests_with_vnodes
+            set -eo pipefail && circleci tests split --split-by=timings --timings-type=classname /tmp/all_dtest_tests_with_vnodes > /tmp/split_dtest_tests_with_vnodes.txt
+            cat /tmp/all_dtest_tests_with_vnodes
+            cat /tmp/split_dtest_tests_with_vnodes.txt
 
             echo "***novnode python tests***"
-            rm /tmp/pythontestlist || true
-            ./run_dtests.py --vnodes false --nose-options='--verbosity=3 --dtest-collect-only --attr=!resource-intensive' 2>&1 | tee -a /tmp/pythontestlist
-            set -eo pipefail && cat /tmp/pythontestlist | grep -v 'upgrade_tests' | grep "... ok" | rev | cut -c 8- | rev > /tmp/testlist_trimmed
-            set -eo pipefail && circleci tests split --split-by=timings --timings-type=classname /tmp/testlist_trimmed > /tmp/novnode_python_tests.txt
-            cat /tmp/novnode_python_tests.txt | tr '\n' ' ' > /tmp/novnode_python_tests_final.txt
-            cat /tmp/novnode_python_tests_final.txt
-
-            # echo "***offheap python tests***"
-            # rm /tmp/pythontestlist || true
-            # TEST_TAG=offheap ./run_dtests.py --vnodes true --nose-options='--verbosity=3 --dtest-collect-only --attr=!resource-intensive' 2>&1 | grep -v "upgrade_tests." | tee -a /tmp/pythontestlist
-            # cat /tmp/python_tests.txt | grep "\-offheap" | rev | cut -c 9- | rev > /tmp/offheap_python_tests.txt
-            # cat /tmp/offheap_python_tests.txt | tr '\n' ' ' > /tmp/offheap_python_tests_final.txt
-            # cat /tmp/offheap_python_tests_final.txt
+            ./run_dtests.py --dtest-print-tests-only --skip-resource-intensive-tests 2>&1 | tee -a /tmp/all_dtest_tests_without_vnodes
+            set -eo pipefail && circleci tests split --split-by=timings --timings-type=classname /tmp/all_dtest_tests_without_vnodes > /tmp/split_dtest_tests_without_vnodes.txt
+            cat /tmp/all_dtest_tests_without_vnodes
+            cat /tmp/split_dtest_tests_without_vnodes.txt
       - run:
           name: Run dtests
           no_output_timeout: 30m
           command: |
-            echo "cat /tmp/regular_python_tests_final.txt"
-            cat /tmp/regular_python_tests_final.txt
+            echo "cat /tmp/split_dtest_tests_with_vnodes.txt"
+            cat /tmp/split_dtest_tests_with_vnodes.txt
 
             source ~/env/bin/activate
             export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
-            export IP_PREFIX="127.0.${CIRCLE_NODE_INDEX}."
 
             cd ~/cassandra-dtest
             mkdir -p /tmp/dtest
-            export NUM_TOKENS="32"
 
             echo "env: $(env)"
             echo "** done env"
-            ./run_dtests.py --vnodes true --nose-options="--verbosity=3 --with-xunit --nocapture" `cat /tmp/regular_python_tests_final.txt` 2>&1 | tee /tmp/dtest/stdout.txt || true
-
-            # store the test results somewhere where we can pick them up
-            mv nosetests.xml nosetests-regular.xml
             mkdir -p /tmp/results/ || true
-            find ~/cassandra-dtest/ -name "*.xml" -exec cp {} /tmp/results/ \; 
+            pytest --use-vnodes --num-tokens=32 --junit-xml=/tmp/results/pytest_result_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests `cat /tmp/split_dtest_tests_with_vnodes.txt` 2>&1 | tee /tmp/dtest/stdout.txt || true
       - run:
           name: Run dtests (without vnodes)
           no_output_timeout: 30m
@@ -267,13 +247,8 @@ jobs:
 
                 cd ~/cassandra-dtest
                 export TEST_TAG="novnodes"
-                export IP_PREFIX="127.0.${CIRCLE_NODE_INDEX}."
-                ./run_dtests.py --vnodes false --nose-options="--verbosity=3 --with-dtestxunit --nocapture --attr=!resource-intensive" `cat /tmp/novnode_python_tests_final.txt` 2>&1 | tee /tmp/dtest/stdout-novnodes.txt || true
-
-                # store the test results somewhere where we can pick them up
-                mv nosetests.xml nosetests-novnode.xml
                 mkdir -p /tmp/results/ || true
-                find ~/cassandra-dtest/ -name "*.xml" -exec cp {} /tmp/results/ \; 
+            	pytest --junit-xml=/tmp/results/pytest_result_novnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests `cat /tmp/split_dtest_tests_without_vnodes.txt` 2>&1 | tee /tmp/dtest/stdout-novnodes.txt || true
             fi
       - store_test_results:
           path: /tmp/results/
