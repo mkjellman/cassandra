@@ -43,17 +43,20 @@ with_dtests_jobs: &with_dtest_jobs
                   requires:
                       - unit_tests
             - dtests-no-vnodes:
-		  requires:
-		      - dtests-with-vnodes
+                  requires:
+                     - dtests-with-vnodes
 with_dtest_jobs_only: &with_dtest_jobs_only
         jobs:
             - build
             - dtests-with-vnodes:
                   requires:
-                      - build
+                      - unit_tests
             - dtests-no-vnodes:
-		  requires:
-		      - dtests-with-vnodes
+                  requires:
+                     - dtests-with-vnodes
+            - dtests-with-vnodes:
+                  requires:
+                      - build
 # Set env_settings, env_vars, and workflows/build_and_run_tests based on environment
 env_settings: &env_settings
     # <<: *default_env_settings
