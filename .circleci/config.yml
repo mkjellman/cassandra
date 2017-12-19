@@ -170,7 +170,7 @@ jobs:
             export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
 
             cd ~/cassandra
-            ant testclasslist -Dtest.classlistfile=/tmp/java_tests_${CIRCLE_NODE_INDEX}_final.txt || true
+            ant testclasslist -Dtest.classlistfile=/tmp/java_tests_${CIRCLE_NODE_INDEX}_final.txt
          no_output_timeout: 15m
       - store_test_results:
             path: ~/cassandra/build/test/output/
@@ -248,7 +248,7 @@ jobs:
             echo "env: $(env)"
             echo "** done env"
             mkdir -p /tmp/results/ || true
-            cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=32 --junit-xml=/tmp/results/pytest_result_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests `cat /tmp/split_dtest_tests_with_vnodes_final.txt` 2>&1 | tee /tmp/dtest/stdout.txt || true
+            cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=32 --junit-xml=/tmp/results/pytest_result_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests `cat /tmp/split_dtest_tests_with_vnodes_final.txt` 2>&1 | tee /tmp/dtest/stdout.txt
       - store_test_results:
           path: /tmp/results/
       - store_artifacts:
@@ -321,7 +321,7 @@ jobs:
                 cd ~/cassandra-dtest
                 export TEST_TAG="novnodes"
                 mkdir -p /tmp/results/ || true
-            	cd ~/cassandra-dtest && pytest --junit-xml=/tmp/results/pytest_result_novnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests `cat /tmp/split_dtest_tests_without_vnodes_final.txt` 2>&1 | tee /tmp/dtest/stdout-novnodes.txt || true
+            	cd ~/cassandra-dtest && pytest --junit-xml=/tmp/results/pytest_result_novnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests `cat /tmp/split_dtest_tests_without_vnodes_final.txt` 2>&1 | tee /tmp/dtest/stdout-novnodes.txt
             fi
       - store_test_results:
           path: /tmp/results/
