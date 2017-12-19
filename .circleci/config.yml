@@ -249,6 +249,14 @@ jobs:
             echo "** done env"
             mkdir -p /tmp/results/ || true
             cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=32 --junit-xml=/tmp/results/pytest_result_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests `cat /tmp/split_dtest_tests_with_vnodes_final.txt` 2>&1 | tee /tmp/dtest/stdout.txt || true
+      - store_test_results:
+          path: /tmp/results/
+      - store_artifacts:
+          path: /tmp/dtest
+          destination: dtest_with_vnodes
+      - store_artifacts:
+          path: ~/cassandra-dtest/logs
+          destination: dtest_with_vnodes_logs
   dtests-no-vnodes:
     <<: *env_settings
     working_directory: ~/
@@ -319,7 +327,7 @@ jobs:
           path: /tmp/results/
       - store_artifacts:
           path: /tmp/dtest
-          destination: dtest
+          destination: dtest_no_vnodes
       - store_artifacts:
           path: ~/cassandra-dtest/logs
-          destination: dtest_logs
+          destination: dtest_no_vnodes_logs
