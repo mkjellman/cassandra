@@ -65,7 +65,7 @@ workflows:
     version: 2
     # build_and_run_tests: *default_jobs
     build_and_run_tests: *with_dtest_jobs_only
-docker_image: &docker_image kjellman/cassandra-test:0.2.3
+docker_image: &docker_image kjellman/cassandra-test:0.2.4
 version: 2
 jobs:
   build:
@@ -207,6 +207,9 @@ jobs:
             export CASS_DRIVER_NO_CYTHON=true
             pip3 install -r ~/cassandra-dtest/requirements.txt
             pip3 freeze
+
+            # patch ccm with python 3 compat fixes not yet upstream
+            (cd / && patch -p0) < /opt/ccm_node.py.py3.diff
       - run:
           name: Determine Tests to Run
           no_output_timeout: 5m
@@ -286,6 +289,9 @@ jobs:
             export CASS_DRIVER_NO_CYTHON=true
             pip3 install -r ~/cassandra-dtest/requirements.txt
             pip3 freeze
+
+            # patch ccm with python 3 compat fixes not yet upstream
+            (cd / && patch -p0) < /opt/ccm_node.py.py3.diff
       - run:
           name: Determine Tests to Run
           no_output_timeout: 5m
