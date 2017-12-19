@@ -245,7 +245,8 @@ jobs:
             echo "env: $(env)"
             echo "** done env"
             mkdir -p /tmp/results/ || true
-            cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=32 --junit-xml=/tmp/results/pytest_result_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests `cat /tmp/split_dtest_tests_with_vnodes_final.txt` 2>&1 | tee /tmp/dtest/stdout.txt
+            # we need the "set -o pipefail" here so that the exit code that circleci will actually use is from pytest and not the exit code from tee
+            cd ~/cassandra-dtest && set -o pipefail && pytest --use-vnodes --num-tokens=32 --junit-xml=/tmp/results/pytest_result_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests `cat /tmp/split_dtest_tests_with_vnodes_final.txt` 2>&1 | tee /tmp/dtest/stdout.txt
       - store_test_results:
           path: /tmp/results/
       - store_artifacts:
@@ -318,7 +319,8 @@ jobs:
                 cd ~/cassandra-dtest
                 export TEST_TAG="novnodes"
                 mkdir -p /tmp/results/ || true
-            	cd ~/cassandra-dtest && pytest --junit-xml=/tmp/results/pytest_result_novnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests `cat /tmp/split_dtest_tests_without_vnodes_final.txt` 2>&1 | tee /tmp/dtest/stdout-novnodes.txt
+                # we need the "set -o pipefail" here so that the exit code that circleci will actually use is from pytest and not the exit code from tee
+            	cd ~/cassandra-dtest && set -o pipefail && pytest --junit-xml=/tmp/results/pytest_result_novnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests `cat /tmp/split_dtest_tests_without_vnodes_final.txt` 2>&1 | tee /tmp/dtest/stdout-novnodes.txt
             fi
       - store_test_results:
           path: /tmp/results/
