@@ -39,15 +39,21 @@ with_dtests_jobs: &with_dtest_jobs
             - unit_tests:
                   requires:
                       - build
-            - dtests:
+            - dtests-with-vnodes:
                   requires:
                       - unit_tests
+            - dtests-no-vnodes:
+		  requires:
+		      - dtests-with-vnodes
 with_dtest_jobs_only: &with_dtest_jobs_only
         jobs:
             - build
-            - dtests:
+            - dtests-with-vnodes:
                   requires:
                       - build
+            - dtests-no-vnodes:
+		  requires:
+		      - dtests-with-vnodes
 # Set env_settings, env_vars, and workflows/build_and_run_tests based on environment
 env_settings: &env_settings
     # <<: *default_env_settings
@@ -59,6 +65,7 @@ workflows:
     version: 2
     # build_and_run_tests: *default_jobs
     build_and_run_tests: *with_dtest_jobs_only
+docker_image: &docker_image kjellman/cassandra-test:0.2.2
 version: 2
 jobs:
   build:
@@ -67,7 +74,7 @@ jobs:
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
     docker:
-      - image: kjellman/cassandra-test:0.2.2
+      - image: *docker_image
         environment:
             <<: *env_vars
     steps:
@@ -126,7 +133,7 @@ jobs:
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
     docker:
-      - image: kjellman/cassandra-test:0.2.2
+      - image: *docker_image
         environment:
             <<: *env_vars
     steps:
@@ -170,12 +177,12 @@ jobs:
       - store_artifacts:
           path: ~/cassandra/build/test/logs
           destination: logs
-  dtests:
+  dtests-with-vnodes:
     <<: *env_settings
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
     docker:
-      - image: kjellman/cassandra-test:0.2.2
+      - image: *docker_image
         environment:
             <<: *env_vars
     steps:
@@ -222,15 +229,8 @@ jobs:
             cat /tmp/split_dtest_tests_with_vnodes.txt | tr '\n' ' ' > /tmp/split_dtest_tests_with_vnodes_final.txt
             # cat /tmp/split_dtest_tests_with_vnodes.txt
             cat /tmp/split_dtest_tests_with_vnodes_final.txt
-
-            echo "***novnode python tests***"
-            ./run_dtests.py --dtest-print-tests-only --skip-resource-intensive-tests --dtest-print-tests-output=/tmp/all_dtest_tests_without_vnodes
-            set -eo pipefail && circleci tests split --split-by=timings --timings-type=classname /tmp/all_dtest_tests_without_vnodes > /tmp/split_dtest_tests_without_vnodes.txt
-            cat /tmp/split_dtest_tests_without_vnodes.txt | tr '\n' ' ' > /tmp/split_dtest_tests_without_vnodes_final.txt
-            # cat /tmp/split_dtest_tests_without_vnodes.txt
-            cat /tmp/split_dtest_tests_without_vnodes_final.txt
       - run:
-          name: Run dtests
+          name: Run dtests (with vnodes)
           no_output_timeout: 15m
           command: |
             echo "cat /tmp/split_dtest_tests_with_vnodes_final.txt"
@@ -246,6 +246,58 @@ jobs:
             echo "** done env"
             mkdir -p /tmp/results/ || true
             cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=32 --junit-xml=/tmp/results/pytest_result_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests `cat /tmp/split_dtest_tests_with_vnodes_final.txt` 2>&1 | tee /tmp/dtest/stdout.txt || true
+  dtests-no-vnodes:
+    <<: *env_settings
+    working_directory: ~/
+    shell: /bin/bash -eo pipefail -l
+    docker:
+      - image: *docker_image
+        environment:
+            <<: *env_vars
+    steps:
+      - attach_workspace:
+          at: /home/cassandra
+      - run:
+          name: Clone Cassandra dtest Repository (via git)
+          command: |
+            export LANG=en_US.UTF-8
+            git clone --single-branch --branch dtests_on_pytest --depth 1 git://github.com/mkjellman/cassandra-dtest.git ~/cassandra-dtest
+      - run:
+          name: Configure virtualenv and python Dependencies
+          command: |
+            # note, this should be super quick as all dependencies should be pre-installed in the docker image
+            # if additional dependencies were added to requirmeents.txt and the docker image hasn't been updated
+            # we'd have to install it here at runtime -- which will make things slow, so do yourself a favor and
+            # rebuild the docker image! (it automatically pulls the latest requirements.txt on build)
+            export LANG=en_US.UTF-8
+            source ~/env/bin/activate
+            export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
+            export CASS_DRIVER_NO_EXTENSIONS=true
+            export CASS_DRIVER_NO_CYTHON=true
+            pip3 install -r ~/cassandra-dtest/requirements.txt
+            pip3 freeze
+      - run:
+          name: Determine Tests to Run
+          no_output_timeout: 5m
+          command: |
+            # reminder: this code (along with all the steps) is independently executed on every circle container
+            # so the goal here is to get the circleci script to return the tests *this* container will run
+            # which we do via the `circleci` cli tool.
+ 
+            export LANG=en_US.UTF-8
+            echo "***python tests***"
+            cd cassandra-dtest
+            source ~/env/bin/activate
+            export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
+            export DEBUG=false
+            export PRINT_DEBUG=false 
+
+            echo "***novnode python tests***"
+            ./run_dtests.py --dtest-print-tests-only --skip-resource-intensive-tests --dtest-print-tests-output=/tmp/all_dtest_tests_without_vnodes
+            set -eo pipefail && circleci tests split --split-by=timings --timings-type=classname /tmp/all_dtest_tests_without_vnodes > /tmp/split_dtest_tests_without_vnodes.txt
+            cat /tmp/split_dtest_tests_without_vnodes.txt | tr '\n' ' ' > /tmp/split_dtest_tests_without_vnodes_final.txt
+            # cat /tmp/split_dtest_tests_without_vnodes.txt
+            cat /tmp/split_dtest_tests_without_vnodes_final.txt
       - run:
           name: Run dtests (without vnodes)
           no_output_timeout: 15m
