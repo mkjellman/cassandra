@@ -13,12 +13,16 @@ default_env_vars: &default_env_vars
     PYTHONUNBUFFERED: true
     CASS_DRIVER_NO_EXTENSIONS: true
     CASS_DRIVER_NO_CYTHON: true
-    CCM_MAX_HEAP_SIZE: 1024M
-    CCM_HEAP_NEWSIZE: 256M
 # For environments with xlarge instances, use more memory
 high_capacity_env_vars: &high_capacity_env_vars
     <<: *default_env_vars
     CCM_MAX_HEAP_SIZE: 3072M
+    CCM_HEAP_NEWSIZE: 1024M 
+# For enviornments with limited memory (e.g the free OSS CircleCI Tier)
+resource_constrained_env_vars: &resource_constrained_env_vars
+    <<: *default_env_vars
+    CCM_MAX_HEAP_SIZE: 1024M
+    CCM_HEAP_NEWSIZE: 256M
 # Settings for users who do not have a paid CircleCI account
 default_env_settings: &default_env_settings
     resource_class: medium
@@ -59,7 +63,7 @@ env_settings: &env_settings
     # <<: *default_env_settings
     <<: *high_capacity_env_settings
 env_vars: &env_vars
-    # <<: *default_env_vars
+    # <<: *resource_constrained_env_vars
     <<: *high_capacity_env_vars
 workflows:
     version: 2
