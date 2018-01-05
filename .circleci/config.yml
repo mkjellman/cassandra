@@ -28,7 +28,7 @@ default_env_settings: &default_env_settings
 # Settings for users with high-capacity, paid CircleCI account
 high_capacity_env_settings: &high_capacity_env_settings
     resource_class: xlarge
-    parallelism: 90
+    parallelism: 100
 default_jobs: &default_jobs
         jobs:
             - build
