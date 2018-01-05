@@ -14,7 +14,7 @@ default_env_vars: &default_env_vars
 # For environments with xlarge instances, use more memory
 high_capacity_env_vars: &high_capacity_env_vars
     <<: *default_env_vars
-    CCM_MAX_HEAP_SIZE: 1024M
+    CCM_MAX_HEAP_SIZE: 2048M
     CCM_HEAP_NEWSIZE: 512M 
 # For enviornments with limited memory (e.g the free OSS CircleCI Tier)
 resource_constrained_env_vars: &resource_constrained_env_vars
