@@ -233,7 +233,7 @@ jobs:
             cat /tmp/split_dtest_tests_with_vnodes_final.txt
       - run:
           name: Run dtests (with vnodes)
-          no_output_timeout: 10m
+          no_output_timeout: 15m
           command: |
             echo "cat /tmp/split_dtest_tests_with_vnodes_final.txt"
             cat /tmp/split_dtest_tests_with_vnodes_final.txt
@@ -312,7 +312,7 @@ jobs:
             cat /tmp/split_dtest_tests_without_vnodes_final.txt
       - run:
           name: Run dtests (without vnodes)
-          no_output_timeout: 10m
+          no_output_timeout: 15m
           command: |
             # for now require at least 50 circleci containers to run the dtests (with less resources the tests won't produce reliable results or will fail to complete) 
             if [ $CIRCLE_NODE_TOTAL -gt 50 ]; then
