@@ -61,7 +61,6 @@ public class LocalSyncTask extends SyncTask implements StreamEventHandler
         this.pullRepair = pullRepair;
     }
 
-
     @VisibleForTesting
     StreamPlan createStreamPlan(InetAddress dst, InetAddress preferred, List<Range<Token>> differences)
     {

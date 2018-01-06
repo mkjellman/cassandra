@@ -358,21 +358,24 @@ counter_cache_save_period: 7200
 # If not set, the default directory is $CASSANDRA_HOME/data/saved_caches.
 # saved_caches_directory: /var/lib/cassandra/saved_caches
 
-# commitlog_sync may be either "periodic" or "batch." 
+# commitlog_sync may be either "periodic", "group", or "batch." 
 # 
 # When in batch mode, Cassandra won't ack writes until the commit log
-# has been fsynced to disk.  It will wait
-# commitlog_sync_batch_window_in_ms milliseconds between fsyncs.
-# This window should be kept short because the writer threads will
-# be unable to do extra work while waiting.  (You may need to increase
-# concurrent_writes for the same reason.)
+# has been flushed to disk.  Each incoming write will trigger the flush task.
+# commitlog_sync_batch_window_in_ms is a deprecated value. Previously it had
+# almost no value, and is being removed.
 #
-# commitlog_sync: batch
 # commitlog_sync_batch_window_in_ms: 2
 #
-# the other option is "periodic" where writes may be acked immediately
+# group mode is similar to batch mode, where Cassandra will not ack writes
+# until the commit log has been flushed to disk. The difference is group
+# mode will wait up to commitlog_sync_group_window_in_ms between flushes.
+#
+# commitlog_sync_group_window_in_ms: 1000
+#
+# the default option is "periodic" where writes may be acked immediately
 # and the CommitLog is simply synced every commitlog_sync_period_in_ms
-# milliseconds. 
+# milliseconds.
 commitlog_sync: periodic
 commitlog_sync_period_in_ms: 10000
 
@@ -754,6 +757,9 @@ column_index_cache_size_in_kb: 2
 # Values less than one are interpreted as unbounded (the default)
 # concurrent_validations: 0
 
+# Number of simultaneous materialized view builder tasks to allow.
+concurrent_materialized_view_builders: 1
+
 # Throttles compaction to the given total throughput across the entire
 # system. The faster you insert data, the faster you need to compact in
 # order to keep the sstable count down, but in general, setting this to
@@ -1045,9 +1051,9 @@ transparent_data_encryption_options:
     key_alias: testing:1
     # CBC IV length for AES needs to be 16 bytes (which is also the default size)
     # iv_length: 16
-    key_provider: 
+    key_provider:
       - class_name: org.apache.cassandra.security.JKSKeyProvider
-        parameters: 
+        parameters:
           - keystore: conf/.keystore
             keystore_password: cassandra
             store_type: JCEKS
@@ -1159,3 +1165,8 @@ back_pressure_strategy:
 # level for writes without timing out. This is different from the consistency level requested by
 # each write which may be lower in order to facilitate availability.
 # ideal_consistency_level: EACH_QUORUM
+
+# Path to write full query log data to when the full query log is enabled
+# The full query log will recrusively delete the contents of this path at
+# times. Don't place links in this directory to other parts of the filesystem.
+#full_query_log_dir: /tmp/cassandrafullquerylog

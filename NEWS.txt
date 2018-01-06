@@ -18,6 +18,10 @@ using the provided 'sstableupgrade' tool.
 
 New features
 ------------
+   - An experimental option to compare all merkle trees together has been added - for example, in
+     a 3 node cluster with 2 replicas identical and 1 out-of-date, with this option enabled, the
+     out-of-date replica will only stream a single copy from up-to-date replica. Enable it by adding
+     "-os" to nodetool repair. See CASSANDRA-3200.
    - The currentTimestamp, currentDate, currentTime and currentTimeUUID functions have been added.
      See CASSANDRA-13132
    - Support for arithmetic operations between `timestamp`/`date` and `duration` has been added.
@@ -30,6 +34,20 @@ New features
      immediately upon creation via hard-linking the files. This means that incomplete
      segments will be available in cdc_raw rather than fully flushed. See documentation
      and CASSANDRA-12148 for more detail.
+   - The initial build of materialized views can be parallelized. The number of concurrent builder
+     threads is specified by the property `cassandra.yaml:concurrent_materialized_view_builders`.
+     This property can be modified at runtime through both JMX and the new `setconcurrentviewbuilders`
+     and `getconcurrentviewbuilders` nodetool commands. See CASSANDRA-12245 for more details.
+   - There is now a binary full query log based on Chronicle Queue that can be controlled using
+     nodetool enablefullquerylog, disablefullquerylog, and resetfullquerylog. The log 
+     contains all queries invoked, approximate time they were invoked, any parameters necessary
+     to bind wildcard values, and all query options. A human readable version of the log can be
+     dumped or tailed using the new bin/fqltool utility. The full query log is designed to be safe
+     to use in production and limits utilization of heap memory and disk space with limits
+     you can specify when enabling the log.
+     See nodetool and fqltool help text for more information.
+   - SSTableDump now supports the -l option to output each partition as it's own json object
+     See CASSANDRA-13848 for more detail
 
 Upgrading
 ---------
@@ -74,6 +92,15 @@ Upgrading
 	- Cassandra 4.0 allows a single port to be used for both secure and insecure
 	  connections between cassandra nodes (CASSANDRA-10404). See the yaml for
 	  specific property changes, and see the security doc for full details.
+    - Due to the parallelization of the initial build of materialized views,
+      the per token range view building status is stored in the new table
+      `system.view_builds_in_progress`. The old table `system.views_builds_in_progress`
+      is no longer used and can be removed. See CASSANDRA-12245 for more details.
+	- Config option commitlog_sync_batch_window_in_ms has been deprecated as it's
+	  documentation has been incorrect and the setting itself near useless.
+	  Batch mode remains a valid commit log mode, however.
+	- There is a new commit log mode, group, which is similar to batch mode
+	  but blocks for up to a configurable number of milliseconds between disk flushes.
 
 Materialized Views
 -------------------
@@ -82,6 +109,19 @@ Materialized Views
      now be logged when they are created. (See https://www.mail-archive.com/dev@cassandra.apache.org/msg11511.html)
    - An 'enable_materialized_views' flag has been added to cassandra.yaml to allow operators to prevent creation of
      views
+
+3.11.2
+======
+
+Upgrading
+---------
+    - Cassandra is now relying on the JVM options to properly shutdown on OutOfMemoryError. By default it will
+      rely on the OnOutOfMemoryError option as the ExitOnOutOfMemoryError and CrashOnOutOfMemoryError options
+      are not supported by the older 1.7 and 1.8 JVMs. A warning will be logged at startup if none of those JVM
+      options are used. See CASSANDRA-13006 for more details
+    - Cassandra is not logging anymore by default an Heap histogram on OutOfMemoryError. To enable that behavior
+      set the 'cassandra.printHeapHistogramOnOutOfMemoryError' System property to 'true'. See CASSANDRA-13006
+      for more details.
 
 3.11.1
 ======

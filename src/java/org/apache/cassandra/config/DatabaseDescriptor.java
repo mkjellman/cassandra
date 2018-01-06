@@ -332,15 +332,23 @@ public class DatabaseDescriptor
 
         if (conf.commitlog_sync == Config.CommitLogSync.batch)
         {
-            if (Double.isNaN(conf.commitlog_sync_batch_window_in_ms) || conf.commitlog_sync_batch_window_in_ms <= 0d)
-            {
-                throw new ConfigurationException("Missing value for commitlog_sync_batch_window_in_ms: positive double value expected.", false);
-            }
-            else if (conf.commitlog_sync_period_in_ms != 0)
+            if (conf.commitlog_sync_period_in_ms != 0)
             {
                 throw new ConfigurationException("Batch sync specified, but commitlog_sync_period_in_ms found. Only specify commitlog_sync_batch_window_in_ms when using batch sync", false);
             }
-            logger.debug("Syncing log with a batch window of {}", conf.commitlog_sync_batch_window_in_ms);
+            logger.debug("Syncing log with batch mode");
+        }
+        else if (conf.commitlog_sync == CommitLogSync.group)
+        {
+            if (Double.isNaN(conf.commitlog_sync_group_window_in_ms) || conf.commitlog_sync_group_window_in_ms <= 0d)
+            {
+                throw new ConfigurationException("Missing value for commitlog_sync_group_window_in_ms: positive double value expected.", false);
+            }
+            else if (conf.commitlog_sync_period_in_ms != 0)
+            {
+                throw new ConfigurationException("Group sync specified, but commitlog_sync_period_in_ms found. Only specify commitlog_sync_group_window_in_ms when using group sync", false);
+            }
+            logger.debug("Syncing log with a group window of {}", conf.commitlog_sync_period_in_ms);
         }
         else
         {
@@ -588,6 +596,9 @@ public class DatabaseDescriptor
 
         if (conf.concurrent_compactors <= 0)
             throw new ConfigurationException("concurrent_compactors should be strictly greater than 0, but was " + conf.concurrent_compactors, false);
+
+        if (conf.concurrent_materialized_view_builders <= 0)
+            throw new ConfigurationException("concurrent_materialized_view_builders should be strictly greater than 0, but was " + conf.concurrent_materialized_view_builders, false);
 
         if (conf.num_tokens > MAX_NUM_TOKENS)
             throw new ConfigurationException(String.format("A maximum number of %d tokens per node is supported", MAX_NUM_TOKENS), false);
@@ -905,7 +916,7 @@ public class DatabaseDescriptor
 
         if(conf.counter_write_request_timeout_in_ms < LOWEST_ACCEPTED_TIMEOUT)
         {
-           logInfo("counter_write_request_timeout_in_ms", conf.counter_cache_keys_to_save, LOWEST_ACCEPTED_TIMEOUT);
+           logInfo("counter_write_request_timeout_in_ms", conf.counter_write_request_timeout_in_ms, LOWEST_ACCEPTED_TIMEOUT);
            conf.counter_write_request_timeout_in_ms = LOWEST_ACCEPTED_TIMEOUT;
         }
 
@@ -1516,6 +1527,16 @@ public class DatabaseDescriptor
         conf.concurrent_validations = value;
     }
 
+    public static int getConcurrentViewBuilders()
+    {
+        return conf.concurrent_materialized_view_builders;
+    }
+
+    public static void setConcurrentViewBuilders(int value)
+    {
+        conf.concurrent_materialized_view_builders = value;
+    }
+
     public static long getMinFreeSpacePerDriveInBytes()
     {
         return conf.min_free_space_per_drive_in_mb * 1024L * 1024L;
@@ -1771,14 +1792,14 @@ public class DatabaseDescriptor
         conf.native_transport_max_concurrent_connections_per_ip = native_transport_max_concurrent_connections_per_ip;
     }
 
-    public static double getCommitLogSyncBatchWindow()
+    public static double getCommitLogSyncGroupWindow()
     {
-        return conf.commitlog_sync_batch_window_in_ms;
+        return conf.commitlog_sync_group_window_in_ms;
     }
 
-    public static void setCommitLogSyncBatchWindow(double windowMillis)
+    public static void setCommitLogSyncGroupWindow(double windowMillis)
     {
-        conf.commitlog_sync_batch_window_in_ms = windowMillis;
+        conf.commitlog_sync_group_window_in_ms = windowMillis;
     }
 
     public static int getCommitLogSyncPeriod()
@@ -2452,5 +2473,10 @@ public class DatabaseDescriptor
     public static Config.RepairCommandPoolFullStrategy getRepairCommandPoolFullStrategy()
     {
         return conf.repair_command_pool_full_strategy;
+    }
+
+    public static String getFullQueryLogPath()
+    {
+        return  conf.full_query_log_dir;
     }
 }

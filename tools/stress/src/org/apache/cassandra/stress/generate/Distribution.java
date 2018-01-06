@@ -45,7 +45,7 @@ public abstract class Distribution implements Serializable
     public long average()
     {
         double sum = 0;
-        double d = 0d;
+        float d = 0;
         for (int count = 0; count < 51 ; count++)
         {
             sum += inverseCumProb(d);

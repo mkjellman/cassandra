@@ -166,6 +166,7 @@ public class Config
     public int min_free_space_per_drive_in_mb = 50;
 
     public volatile int concurrent_validations = Integer.MAX_VALUE;
+    public volatile int concurrent_materialized_view_builders = 1;
 
     /**
      * @deprecated retry support removed on CASSANDRA-10992
@@ -184,7 +185,12 @@ public class Config
     public String commitlog_directory;
     public Integer commitlog_total_space_in_mb;
     public CommitLogSync commitlog_sync;
+
+    /**
+     * @deprecated since 4.0 This value was near useless, and we're not using it anymore
+     */
     public double commitlog_sync_batch_window_in_ms = Double.NaN;
+    public double commitlog_sync_group_window_in_ms = Double.NaN;
     public int commitlog_sync_period_in_ms;
     public int commitlog_segment_size_in_mb = 32;
     public ParameterizedClass commitlog_compression;
@@ -358,6 +364,8 @@ public class Config
     public RepairCommandPoolFullStrategy repair_command_pool_full_strategy = RepairCommandPoolFullStrategy.queue;
     public int repair_command_pool_size = concurrent_validations;
 
+    public String full_query_log_dir = null;
+
     /**
      * @deprecated migrate to {@link DatabaseDescriptor#isClientInitialized()}
      */
@@ -382,7 +390,8 @@ public class Config
     public enum CommitLogSync
     {
         periodic,
-        batch
+        batch,
+        group
     }
     public enum InternodeCompression
     {

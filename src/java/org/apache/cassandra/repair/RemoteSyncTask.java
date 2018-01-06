@@ -39,7 +39,7 @@ import org.apache.cassandra.utils.FBUtilities;
  *
  * When RemoteSyncTask receives SyncComplete from remote node, task completes.
  */
-public class RemoteSyncTask extends SyncTask
+public class RemoteSyncTask extends SyncTask implements CompletableRemoteSyncTask
 {
     private static final Logger logger = LoggerFactory.getLogger(RemoteSyncTask.class);
 
