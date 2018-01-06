@@ -124,7 +124,7 @@ jobs:
                 echo "Build failed with exit code: ${RETURN}"
                 exit ${RETURN}
             fi
-          no_output_timeout: 10m
+          no_output_timeout: 15m
       - persist_to_workspace:
             root: /home/cassandra
             paths:
@@ -143,7 +143,7 @@ jobs:
           at: /home/cassandra
       - run:
           name: Determine Tests to Run
-          no_output_timeout: 10m
+          no_output_timeout: 15m
           command: |
             # reminder: this code (along with all the steps) is independently executed on every circle container
             # so the goal here is to get the circleci script to return the tests *this* container will run
@@ -170,7 +170,7 @@ jobs:
 
             cd ~/cassandra
             ant testclasslist -Dtest.classlistfile=/tmp/java_tests_${CIRCLE_NODE_INDEX}_final.txt
-         no_output_timeout: 10m
+         no_output_timeout: 15m
       - store_test_results:
             path: ~/cassandra/build/test/output/
       - store_artifacts:
