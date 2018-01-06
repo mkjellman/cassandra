@@ -221,12 +221,11 @@ jobs:
             # which we do via the `circleci` cli tool.
  
             export LANG=en_US.UTF-8
-            echo "***python tests***"
             cd cassandra-dtest
             source ~/env/bin/activate
             export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
 
-            echo "***regular python tests***"
+            echo "***Collected DTests (with vnodes)***"
             set -eo pipefail && ./run_dtests.py --use-vnodes --dtest-print-tests-only --skip-resource-intensive-tests --dtest-print-tests-output=/tmp/all_dtest_tests_with_vnodes
             set -eo pipefail && circleci tests split --split-by=timings --timings-type=classname /tmp/all_dtest_tests_with_vnodes > /tmp/split_dtest_tests_with_vnodes.txt
             cat /tmp/split_dtest_tests_with_vnodes.txt | tr '\n' ' ' > /tmp/split_dtest_tests_with_vnodes_final.txt
@@ -301,12 +300,11 @@ jobs:
             # which we do via the `circleci` cli tool.
  
             export LANG=en_US.UTF-8
-            echo "***python tests***"
             cd cassandra-dtest
             source ~/env/bin/activate
             export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
 
-            echo "***novnode python tests***"
+            echo "***Collected DTests (without vnodes)***"
             ./run_dtests.py --dtest-print-tests-only --skip-resource-intensive-tests --dtest-print-tests-output=/tmp/all_dtest_tests_without_vnodes
             set -eo pipefail && circleci tests split --split-by=timings --timings-type=classname /tmp/all_dtest_tests_without_vnodes > /tmp/split_dtest_tests_without_vnodes.txt
             cat /tmp/split_dtest_tests_without_vnodes.txt | tr '\n' ' ' > /tmp/split_dtest_tests_without_vnodes_final.txt
@@ -324,7 +322,6 @@ jobs:
                 cd ~/cassandra-dtest
                 mkdir -p /tmp/dtest
 
-                export TEST_TAG="novnodes"
                 mkdir -p /tmp/results/dtests
                 # we need the "set -o pipefail" here so that the exit code that circleci will actually use is from pytest and not the exit code from tee
                 export SPLIT_TESTS=`cat /tmp/split_dtest_tests_without_vnodes_final.txt`
