@@ -170,7 +170,7 @@ jobs:
 
             cd ~/cassandra
             ant testclasslist -Dtest.classlistfile=/tmp/java_tests_${CIRCLE_NODE_INDEX}_final.txt
-         no_output_timeout: 15m
+         no_output_timeout: 10m
       - store_test_results:
             path: ~/cassandra/build/test/output/
       - store_artifacts:
@@ -234,7 +234,7 @@ jobs:
             cat /tmp/split_dtest_tests_with_vnodes_final.txt
       - run:
           name: Run dtests (with vnodes)
-          no_output_timeout: 15m
+          no_output_timeout: 10m
           command: |
             echo "cat /tmp/split_dtest_tests_with_vnodes_final.txt"
             cat /tmp/split_dtest_tests_with_vnodes_final.txt
@@ -247,12 +247,12 @@ jobs:
 
             echo "env: $(env)"
             echo "** done env"
-            mkdir -p /tmp/results/
+            mkdir -p /tmp/results/dtest
             # we need the "set -o pipefail" here so that the exit code that circleci will actually use is from pytest and not the exit code from tee
             export SPLIT_TESTS=`cat /tmp/split_dtest_tests_with_vnodes_final.txt`
-            set -o pipefail && cd ~/cassandra-dtest && pytest --log-level="INFO" --use-vnodes --num-tokens=32 --junit-xml=/tmp/results/pytest_result_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt
+            set -o pipefail && cd ~/cassandra-dtest && pytest --log-level="INFO" --use-vnodes --num-tokens=32 --junit-xml=/tmp/results/dtest/pytest_result_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt
       - store_test_results:
-          path: /tmp/results/
+          path: /tmp/results/dtest
       - store_artifacts:
           path: /tmp/dtest
           destination: dtest_with_vnodes
@@ -314,7 +314,7 @@ jobs:
             cat /tmp/split_dtest_tests_without_vnodes_final.txt
       - run:
           name: Run dtests (without vnodes)
-          no_output_timeout: 15m
+          no_output_timeout: 10m
           command: |
             # for now require at least 50 circleci containers to run the dtests (with less resources the tests won't produce reliable results or will fail to complete) 
             if [ $CIRCLE_NODE_TOTAL -gt 50 ]; then
@@ -325,13 +325,13 @@ jobs:
                 mkdir -p /tmp/dtest
 
                 export TEST_TAG="novnodes"
-                mkdir -p /tmp/results/
+                mkdir -p /tmp/results/dtests
                 # we need the "set -o pipefail" here so that the exit code that circleci will actually use is from pytest and not the exit code from tee
                 export SPLIT_TESTS=`cat /tmp/split_dtest_tests_without_vnodes_final.txt`
-            	set -o pipefail && cd ~/cassandra-dtest && pytest --log-level="INFO" --junit-xml=/tmp/results/pytest_result_novnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout-novnodes.txt
+            	set -o pipefail && cd ~/cassandra-dtest && pytest --log-level="INFO" --junit-xml=/tmp/results/dtests/pytest_result_novnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --skip-resource-intensive-tests $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout-novnodes.txt
             fi
       - store_test_results:
-          path: /tmp/results/
+          path: /tmp/results/dtests
       - store_artifacts:
           path: /tmp/dtest
           destination: dtest_no_vnodes
