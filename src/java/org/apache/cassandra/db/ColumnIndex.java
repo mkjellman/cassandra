@@ -22,6 +22,9 @@ import java.util.*;
 
 import com.google.common.annotations.VisibleForTesting;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.rows.*;
 import org.apache.cassandra.io.sstable.format.SSTableFlushObserver;
@@ -31,6 +34,8 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 
 public class ColumnIndex
 {
+    private static final Logger logger = LoggerFactory.getLogger(ColumnIndex.class);
+
     public final long partitionHeaderLength;
     public final List<IndexInfo> columnsIndex;
 
@@ -121,6 +126,7 @@ public class ColumnIndex
         {
             writePartitionHeader(iterator);
             this.headerLength = writer.position() - initialPosition;
+            logger.info("ColumnIndex build() headerLength: {} writer.position(): {} initialPosition: {}", headerLength, writer.position(), initialPosition);
 
             while (iterator.hasNext())
                 add(iterator.next());

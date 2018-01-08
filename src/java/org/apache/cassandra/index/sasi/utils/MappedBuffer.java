@@ -28,9 +28,13 @@ import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.RandomAccessReader;
 
 import com.google.common.annotations.VisibleForTesting;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class MappedBuffer implements Closeable
 {
+    private static final Logger logger = LoggerFactory.getLogger(MappedBuffer.class);
+
     private final MappedByteBuffer[] pages;
 
     private long position, limit;
@@ -103,7 +107,10 @@ public class MappedBuffer implements Closeable
     public MappedBuffer position(long newPosition)
     {
         if (newPosition < 0 || newPosition > limit)
+        {
+            System.out.println("111");
             throw new IllegalArgumentException("position: " + newPosition + ", limit: " + limit);
+        }
 
         position = newPosition;
         return this;
@@ -170,7 +177,18 @@ public class MappedBuffer implements Closeable
     public int getInt(long pos)
     {
         if (isPageAligned(pos, 4))
+        {
+            try {
+                logger.info("going to get mmaped page {} of {} for pos {}", getPage(pos), pages.length, pos);
+                MappedByteBuffer buf = pages[getPage(pos)];
+                logger.info("going to getInt for position {} (from {} pos)", getPageOffset(pos), pos);
+                int intRet = buf.getInt(getPageOffset(pos));
+                logger.info("intRet is {}", intRet);
+            } catch (Throwable t) {
+                logger.error("kj321 getInt for pos {} failed", pos, t);
+            }
             return pages[getPage(pos)].getInt(getPageOffset(pos));
+        }
 
         int ch1 = get(pos)     & 0xff;
         int ch2 = get(pos + 1) & 0xff;
@@ -192,6 +210,17 @@ public class MappedBuffer implements Closeable
     {
         // fast path if the long could be retrieved from a single page
         // that would avoid multiple expensive look-ups into page array.
+        try {
+            logger.info("going to get buf at idx {} of {}", getPage(pos), pages.length);
+            MappedByteBuffer buf = pages[getPage(pos)];
+            logger.info("going to call getLong for pageOffset {} (for pos {})", getPageOffset(pos), pos);
+            long retLong = buf.getLong(getPageOffset(pos));
+            logger.info("retLong was {}", retLong);
+        } catch (Throwable t) {
+            logger.error("failed kj123", t);
+            return 0;
+        }
+
         return (isPageAligned(pos, 8))
                 ? pages[getPage(pos)].getLong(getPageOffset(pos))
                 : ((long) (getInt(pos)) << 32) + (getInt(pos + 4) & 0xFFFFFFFFL);

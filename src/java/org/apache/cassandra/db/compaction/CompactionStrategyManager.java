@@ -1193,7 +1193,7 @@ public class CompactionStrategyManager implements INotificationConsumer
 
     public boolean supportsEarlyOpen()
     {
-        return repaired.get(0).supportsEarlyOpen();
+        return false;
     }
 
     @VisibleForTesting

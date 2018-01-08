@@ -891,14 +891,11 @@ public class SSTableRewriterTest extends SSTableWriterTestBase
         assertEquals(1, allSSTables.size());
         final AtomicBoolean done = new AtomicBoolean(false);
         final AtomicBoolean failed = new AtomicBoolean(false);
-        logger.error("test out 1");
         Runnable r = () -> {
             while (!done.get())
             {
-                logger.error("test1");
                 Iterable<SSTableReader> sstables = cfs.getSSTables(SSTableSet.CANONICAL);
-                logger.error("kjkj ==> {}", Iterables.size(sstables));
-                if (Iterables.size(sstables) != 1)
+                if (Iterables.size(sstables) <= 0)
                 {
                     failed.set(true);
                     return;

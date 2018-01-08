@@ -28,6 +28,7 @@ import org.apache.cassandra.io.sstable.birch.BirchReader;
 import org.apache.cassandra.io.util.PageAlignedReader;
 import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.schema.TableMetadata;
 
 /**
  * An IndexedEntry implementation that is backed by a BirchWriter Index
@@ -37,7 +38,7 @@ public class BirchIndexedEntry implements IndexedEntry, AutoCloseable
     private static final Logger logger = LoggerFactory.getLogger(BirchIndexedEntry.class);
 
     private final long position;
-    private final ClusteringComparator comparator;
+    private final TableMetadata tableMetadata;
     private final SerializationHeader header;
     private PageAlignedReader reader;
     private final BirchReader<IndexInfo> birchReader;
@@ -52,11 +53,12 @@ public class BirchIndexedEntry implements IndexedEntry, AutoCloseable
     private BirchReader<IndexInfo>.BirchIterator iterator = null;
     private boolean iteratorDirectionReversed = false;
 
-    public BirchIndexedEntry(long position, ClusteringComparator comparator, SerializationHeader header, Version version,
+    public BirchIndexedEntry(long position, TableMetadata tableMetadata, SerializationHeader header, Version version,
                              PageAlignedReader reader, long headerLength, DeletionTime deletionTime) throws IOException
     {
+        logger.info("new BirchIndexedEntry created! for position: {}", position);
         this.position = position;
-        this.comparator = comparator;
+        this.tableMetadata = tableMetadata;
         this.header = header;
         this.reader = reader;
         this.headerLength = headerLength;
@@ -112,13 +114,13 @@ public class BirchIndexedEntry implements IndexedEntry, AutoCloseable
         throw new UnsupportedOperationException();
     }
 
-    public IndexInfo getIndexInfo(ClusteringPrefix name, ClusteringComparator comparator, boolean reversed) throws IOException
+    public IndexInfo getIndexInfo(ClusteringPrefix name, boolean reversed) throws IOException
     {
         assert reader.isCurrentSubSegmentPageAligned()
                && reader.getCurrentSegmentIdx() == readerSegmentIdx;
 
         iteratorDirectionReversed = reversed;
-        return birchReader.search(name, comparator, reversed);
+        return birchReader.search(name, tableMetadata, reversed);
     }
 
     public boolean hasNext()
@@ -170,12 +172,14 @@ public class BirchIndexedEntry implements IndexedEntry, AutoCloseable
         return (iterator != null) ? iterator.peek() : null;
     }
 
-    public void setIteratorBounds(ClusteringBound start, ClusteringBound end, ClusteringComparator comparator, boolean reversed) throws IOException
+    public void setIteratorBounds(ClusteringBound start, ClusteringBound end, boolean reversed) throws IOException
     {
         assert reader.getCurrentSegmentIdx() == readerSegmentIdx;
 
+        logger.info("setIteratorBounds start: {} end: {}", start.toString(tableMetadata), end.toString(tableMetadata));
+
         iteratorDirectionReversed = reversed;
-        iterator = birchReader.getIterator(start, comparator, reversed);
+        iterator = birchReader.getIterator(start, end, tableMetadata, reversed);
         prepared = true;
 
         // todo kjellman: need to switch getIterator to new start/end in one go method
@@ -217,7 +221,7 @@ public class BirchIndexedEntry implements IndexedEntry, AutoCloseable
 
             // the birch index is always in the 2nd sub-segment
             reader.setSegment(readerSegmentIdx, 1);
-            iterator = birchReader.getIterator(comparator, reversed);
+            iterator = birchReader.getIterator(tableMetadata, reversed);
             //prepared = true;
         }
         catch (IOException e)

@@ -18,12 +18,14 @@
 
 package org.apache.cassandra.db;
 
+import org.apache.cassandra.schema.TableMetadata;
+
 /**
  * Created by mkjellman on 1/12/17.
  */
 public class IndexedEntryFactory
 {
-    public static IndexedEntry create(long position, DeletionTime deletionTime, ColumnIndex index)
+    public static IndexedEntry create(long position, DeletionTime deletionTime, ColumnIndex index, TableMetadata tableMetadata)
     {
         assert index != null;
         assert deletionTime != null;
@@ -32,7 +34,8 @@ public class IndexedEntryFactory
         // since if there are insufficient columns to be worth indexing we're going to seek to
         // the beginning of the row anyway, so we might as well read the tombstone there as well.
         if (index.columnsIndex.size() > 1)
-            return new OnHeapIndexedEntry(position, deletionTime, index.partitionHeaderLength, index.columnsIndex, null);
+            return new OnHeapIndexedEntry(position, deletionTime, index.partitionHeaderLength, index.columnsIndex,
+                                          null, tableMetadata);
         else
             return new NonIndexedRowEntry(position, index.partitionHeaderLength, null);
     }

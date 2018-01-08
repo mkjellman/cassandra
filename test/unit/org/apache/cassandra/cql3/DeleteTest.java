@@ -40,8 +40,6 @@ public class DeleteTest extends CQLTester
     @Before
     public void prepare() throws Exception
     {
-        // Schema.instance.clear();
-
         Session session = sessionNet();
         session.getCluster().getConfiguration().getQueryOptions().setConsistencyLevel(ConsistencyLevel.ONE);
 

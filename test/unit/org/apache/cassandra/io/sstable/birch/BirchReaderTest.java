@@ -123,7 +123,7 @@ public class BirchReaderTest extends SchemaLoader
                 sampleNames.add(sample.serializedKey(cfs.getComparator()));
             }
 
-            BirchReader.BirchIterator iterator = birchReader.getIterator(cfs.getComparator(), reversed);
+            BirchReader.BirchIterator iterator = birchReader.getIterator(cfs.metadata.get(), reversed);
 
             int iteratorCount = 0;
             int sampleMatches = 0;

@@ -167,6 +167,7 @@ public class KeyspaceTest extends CQLTester
                     {
                         Row row = rowIterator.next();
                         Cell cell = row.getCell(cfs.metadata().getColumn(new ColumnIdentifier("c", false)));
+                        logger.info("got i: {} cell: {}", i, row.toString(cfs.metadata(), true));
                         assertEquals(ByteBufferUtil.bytes(columnValuePrefix + i), cell.value());
                     }
                 }
@@ -176,6 +177,7 @@ public class KeyspaceTest extends CQLTester
                     {
                         Row row = rowIterator.next();
                         Cell cell = row.getCell(cfs.metadata().getColumn(new ColumnIdentifier("c", false)));
+                        logger.info("got i: {} cell: {}", i, row.toString(cfs.metadata(), true));
                         assertEquals(ByteBufferUtil.bytes(columnValuePrefix + i), cell.value());
                     }
                 }
@@ -197,17 +199,19 @@ public class KeyspaceTest extends CQLTester
 
         for (int round = 0; round < 2; round++)
         {
+            if (round == 0)
+                cfs.forceBlockingFlush();
+
             //assertRowsInSlice(cfs, "0", 96, 99, 4, false, prefix);
-            assertRowsInSlice(cfs, "0", 96, 99, 4, true, prefix);
+            //assertRowsInSlice(cfs, "0", 96, 99, 4, true, prefix);
 
             //assertRowsInSlice(cfs, "0", 100, 103, 4, false, prefix);
             //assertRowsInSlice(cfs, "0", 100, 103, 4, true, prefix);
 
-            //assertRowsInSlice(cfs, "0", 0, 99, 100, false, prefix);
-            //assertRowsInSlice(cfs, "0", 288, 299, 12, true, prefix);
+            assertRowsInSlice(cfs, "0", 0, 99, 100, false, prefix);
+            assertRowsInSlice(cfs, "0", 288, 299, 12, true, prefix);
 
-            if (round == 0)
-                cfs.forceBlockingFlush();
+
         }
     }
 

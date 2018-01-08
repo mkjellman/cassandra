@@ -299,8 +299,8 @@ public class SSTableReversedIterator extends AbstractSSTableIterator
 
             // Find the first index block we'll need to read for the slice.
             //indexedEntry.setIteratorBounds(null, slice.start(), metadata.comparator, true);
-            indexedEntry.setIteratorBounds(slice.end(), slice.start(), metadata.comparator, true);
-            //indexedEntry.setIteratorBounds(slice.start(), slice.end(), metadata.comparator, true);
+            //indexedEntry.setIteratorBounds(slice.end(), slice.start(), true);
+            indexedEntry.setIteratorBounds(slice.start(), slice.end(), true);
             if (!indexedEntry.hasNext())
             {
                 iterator = Collections.emptyIterator();

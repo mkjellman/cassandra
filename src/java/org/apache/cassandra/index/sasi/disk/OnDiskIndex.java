@@ -42,10 +42,15 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.PeekingIterator;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import static org.apache.cassandra.index.sasi.disk.OnDiskBlock.SearchResult;
 
 public class OnDiskIndex implements Iterable<OnDiskIndex.DataTerm>, Closeable
 {
+    private static final Logger logger = LoggerFactory.getLogger(OnDiskIndex.class);
+
     public enum IteratorOrder
     {
         DESC(1), ASC(-1);
@@ -146,6 +151,7 @@ public class OnDiskIndex implements Iterable<OnDiskIndex.DataTerm>, Closeable
 
             // start of the levels
             indexFile.position(indexFile.getLong(indexSize - 8));
+            logger.info("indexFile.position {}", indexFile.position());
 
             int numLevels = indexFile.getInt();
             levels = new PointerLevel[numLevels];
@@ -552,8 +558,15 @@ public class OnDiskIndex implements Iterable<OnDiskIndex.DataTerm>, Closeable
 
             // calculate block offset and move there
             // (long is intentional, we'll just need mmap implementation which supports long positions)
-            long blockOffset = indexFile.getLong(blockOffsets + idx * 8);
-            return cast(indexFile.duplicate().position(blockOffset));
+            try
+            {
+                logger.info("getBlock called for idx {} --> calling getLong for {} (blockOffsets {} idx {})", idx, (blockOffsets + idx * 8), blockOffsets, idx);
+                long blockOffset = indexFile.getLong(blockOffsets + idx * 8);
+                return cast(indexFile.duplicate().position(blockOffset));
+            } catch (Throwable t) {
+                logger.error("fuck kjellman", t);
+                return null;
+            }
         }
 
         protected abstract T cast(MappedBuffer block);

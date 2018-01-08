@@ -147,9 +147,10 @@ public class FileHandle extends SharedCloseableImpl
 
     public FileDataInput createPageAlignedReader(long position) throws IOException
     {
+        logger.info("createPageAlignedReader called for position {} ==> {}", position, channel.filePath());
         PageAlignedReader reader = new PageAlignedReader(instantiateRebufferer(null), false);
         reader.findAndSetSegmentAndSubSegmentCurrentForPosition(position); // kjkj (SSTableCorruptionDetectionTest)
-        reader.seek(position);
+        //reader.seek(position);
         return reader;
     }
 

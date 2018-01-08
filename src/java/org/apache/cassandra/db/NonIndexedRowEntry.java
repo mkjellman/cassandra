@@ -94,7 +94,7 @@ public class NonIndexedRowEntry implements IndexedEntry
         return EMPTY_SIZE;
     }
 
-    public IndexInfo getIndexInfo(ClusteringPrefix name, ClusteringComparator comparator, boolean reversed)
+    public IndexInfo getIndexInfo(ClusteringPrefix name, boolean reversed)
     {
         throw new UnsupportedOperationException();
     }
@@ -114,7 +114,7 @@ public class NonIndexedRowEntry implements IndexedEntry
         throw new UnsupportedOperationException();
     }
 
-    public void setIteratorBounds(ClusteringBound start, ClusteringBound end, ClusteringComparator comparator, boolean reversed) throws IOException
+    public void setIteratorBounds(ClusteringBound start, ClusteringBound end, boolean reversed) throws IOException
     {
         throw new UnsupportedOperationException();
     }
@@ -134,7 +134,8 @@ public class NonIndexedRowEntry implements IndexedEntry
     }
 
     public void close()
-    {if (reader != null)
-        FileUtils.closeQuietly(reader);
+    {
+        if (reader != null)
+            FileUtils.closeQuietly(reader);
     }
 }

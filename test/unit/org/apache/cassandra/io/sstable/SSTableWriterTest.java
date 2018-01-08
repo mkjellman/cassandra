@@ -21,6 +21,7 @@ package org.apache.cassandra.io.sstable;
 import java.io.File;
 import java.nio.ByteBuffer;
 
+import org.junit.Assert;
 import org.junit.Test;
 
 import org.apache.cassandra.*;
@@ -47,6 +48,10 @@ public class SSTableWriterTest extends SSTableWriterTestBase
         ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(CF);
         truncate(cfs);
 
+        if (!cfs.supportsEarlyOpen()) {
+            return;
+        }
+
         File dir = cfs.getDirectories().getDirectoryForNewSSTables();
         LifecycleTransaction txn = LifecycleTransaction.offline(OperationType.WRITE);
         try (SSTableWriter writer = getWriter(cfs, dir, txn))
@@ -60,7 +65,8 @@ public class SSTableWriterTest extends SSTableWriterTestBase
             }
 
             SSTableReader s = writer.setMaxDataAge(1000).openEarly();
-            assert s != null;
+            Assert.assertNotNull(s);
+
             assertFileCounts(dir.list());
             for (int i = 10000; i < 20000; i++)
             {

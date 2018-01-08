@@ -20,9 +20,6 @@ package org.apache.cassandra.io.sstable.birch;
 
 import java.io.IOException;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.io.util.PageAlignedReader;
 
@@ -38,8 +35,6 @@ import static org.apache.cassandra.io.sstable.birch.BirchWriter.SerializerType;
  */
 public class Descriptor
 {
-    private static final Logger logger = LoggerFactory.getLogger(Descriptor.class);
-
     private final short version;
     private final long rootOffset;
     private final SerializerType serializerType;
@@ -192,7 +187,6 @@ public class Descriptor
         writer.writeLong(overflowPageOffset);
         writer.writeLong(overflowPageLength);
         writer.writeInt(elementCount);
-        logger.info("serializing a Descriptor! version: {} alignedPageSize: {} rootOffset: {} firstNodeOffset: {} firstLeafOffset: {} overflowPageOffset: {} overflowPageLength: {} elementCount: {}", version, alignedPageSize, rootOffset, firstNodeOffset, firstLeafOffset, overflowPageOffset, overflowPageLength, elementCount);
 
         writer.seek(pos + alignedPageSize);
     }

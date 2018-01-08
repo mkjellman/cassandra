@@ -33,16 +33,22 @@ import org.apache.cassandra.schema.TableMetadata;
 
 public interface IndexedEntry extends IMeasurableMemory, Iterator<IndexInfo>, AutoCloseable
 {
-    IndexInfo getIndexInfo(ClusteringPrefix name, ClusteringComparator comparator, boolean reversed) throws IOException;
+    IndexInfo getIndexInfo(ClusteringPrefix name, boolean reversed) throws IOException;
 
-    void setIteratorBounds(ClusteringBound start, ClusteringBound end, ClusteringComparator comparator, boolean reversed) throws IOException;
+    void setIteratorBounds(ClusteringBound start, ClusteringBound end, boolean reversed) throws IOException;
+
+    /**
+     * @return the offset to the start of the header information for this row.
+     * For some formats this may not be the start of the row.
+     */
+    //long headerOffset();
 
     /**
      * The length of the row header (partition key, partition deletion and static row).
      * This value is only provided for indexed entries and this method will throw
      * {@code UnsupportedOperationException} if {@code !isIndexed()}.
      */
-    long headerLength(); // kjkj remove this is stupid just using to confirm refactor
+    long headerLength();
 
     void reset(boolean reversed);
 
@@ -92,7 +98,7 @@ public interface IndexedEntry extends IMeasurableMemory, Iterator<IndexInfo>, Au
 
             if (rie.isIndexed())
             {
-                //writer.writeLong(rie.headerLength());
+                writer.writeLong(rie.headerLength());
                 DeletionTime.serializer.serialize(rie.deletionTime(), writer.stream);
                 writer.finalizeCurrentSubSegment();
                 BirchWriter birchWriter = new BirchWriter.Builder(rie.getAllColumnIndexes().iterator(), BirchWriter.SerializerType.INDEXINFO, metadata.comparator).build();
@@ -112,7 +118,7 @@ public interface IndexedEntry extends IMeasurableMemory, Iterator<IndexInfo>, Au
         {
             // instanceof check is a "hack" for now to use the "old"/legacy/pre-birch deserialization
             // logic with the AutoSavingCache
-            if (version.hasBirchIndexes() && in instanceof PageAlignedReader)
+            if (version.hasBirchIndexes())
             {
                 // todo kjkj: should we do a copy here?
                 PageAlignedReader reader = (PageAlignedReader) in;
@@ -123,13 +129,13 @@ public interface IndexedEntry extends IMeasurableMemory, Iterator<IndexInfo>, Au
 
                 if (isIndexed)
                 {
-                    //long headerLength = reader.readLong();
+                    long headerLength = reader.readLong();
                     //long headerLength = reader.readUnsignedVInt();
                     DeletionTime deletionTime = DeletionTime.serializer.deserialize(reader);
                     reader.nextSubSegment();
                     //PageAlignedReader readerCopy = PageAlignedReader.copy((PageAlignedReader) in);
-                    IndexedEntry entry = new BirchIndexedEntry(position, metadata.comparator, header, version,
-                                                               reader, 0, deletionTime);
+                    IndexedEntry entry = new BirchIndexedEntry(position, metadata, header, version,
+                                                               reader, headerLength, deletionTime);
                     reader.seekToEndOfCurrentSubSegment();
                     return entry;
                 }
@@ -154,7 +160,7 @@ public interface IndexedEntry extends IMeasurableMemory, Iterator<IndexInfo>, Au
 
                     in.skipBytesFully(entries * TypeSizes.sizeof(0));
 
-                    return new OnHeapIndexedEntry(position, deletionTime, headerLength, columnsIndex, null);
+                    return new OnHeapIndexedEntry(position, deletionTime, headerLength, columnsIndex, null, metadata);
                 }
                 else
                 {

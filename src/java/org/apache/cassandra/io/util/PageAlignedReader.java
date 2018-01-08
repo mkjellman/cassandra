@@ -364,6 +364,7 @@ public class PageAlignedReader extends RebufferingInputStream implements FileDat
 
     public long getOffset()
     {
+        //logger.info("bufferHolder null? {} buffer null? {}", (bufferHolder == null) ? "YES" : "NO", (buffer == null) ? "YES" : "NO");
         return bufferHolder.offset() + buffer.position();
     }
 
@@ -611,8 +612,13 @@ public class PageAlignedReader extends RebufferingInputStream implements FileDat
     {
         PageAlignedFileMark alignedMark = (PageAlignedFileMark) mark;
         if (!isPositionInsideCurrentSubSegment(alignedMark.pointer))
+        {
             setCurrentBoundsForSegment(alignedMark.currentSegmentIdx, alignedMark.currentSubSegmentIdx);
-        seek(alignedMark.pointer);
+        }
+        else
+        {
+            seek(alignedMark.pointer);
+        }
     }
 
     protected long current()
@@ -790,7 +796,7 @@ public class PageAlignedReader extends RebufferingInputStream implements FileDat
         ChannelProxy channel = new ChannelProxy(file);
         try
         {
-            ChunkReader reader = new SimpleChunkReader(channel, -1, BufferType.OFF_HEAP, DEFAULT_BUFFER_SIZE);
+            ChunkReader reader = new SimpleChunkReader(channel, -1, BufferType.ON_HEAP, DEFAULT_BUFFER_SIZE);
             Rebufferer rebufferer = reader.instantiateRebufferer();
             return new RandomAccessReaderWithOwnChannel(rebufferer, skipSetup);
         }

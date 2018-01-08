@@ -190,7 +190,6 @@ public class BigTableScanner implements ISSTableScanner
         long indexPosition = sstable.getIndexScanPosition(currentRange.left);
         try
         {
-            logger.info("ifile instance of {}", ifile.getClass().getName());
             if (ifile instanceof PageAlignedReader)
                 ((PageAlignedReader) ifile).findAndSetSegmentAndSubSegmentCurrentForPosition(indexPosition);
 
@@ -351,14 +350,12 @@ public class BigTableScanner implements ISSTableScanner
                         }
                         else
                         {
-                            /*
                             if (((PageAlignedReader) ifile).isClosed())
                             {
                                 logger.error("ifile we're working on in BigTableScanner iterator is closed!", ((PageAlignedReader) ifile).getCloseException());
                                 //ifile = sstable.openIndexReader();
                             }
-                            ifile.reset(lastDeserializedMark);
-                            */
+                            //ifile.reset(lastDeserializedMark);
                         }
                     }
                 }

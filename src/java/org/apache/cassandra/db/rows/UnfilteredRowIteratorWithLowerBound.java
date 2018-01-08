@@ -180,7 +180,7 @@ public class UnfilteredRowIteratorWithLowerBound extends LazilyInitializedUnfilt
         // todo kjkjk
         //IndexInfo column = indexEntry.next();
         IndexInfo column = indexEntry.peek();
-        ClusteringPrefix lowerBoundPrefix = filter.isReversed() ? column.getLastName() : column.getFirstName();
+        ClusteringPrefix lowerBoundPrefix = filter.isReversed() ? column.getFirstName() : column.getLastName();
         assert lowerBoundPrefix.getRawValues().length <= metadata().comparator.size() :
             String.format("Unexpected number of clustering values %d, expected %d or fewer for %s",
                           lowerBoundPrefix.getRawValues().length,

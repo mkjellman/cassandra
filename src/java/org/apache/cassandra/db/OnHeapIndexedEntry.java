@@ -28,6 +28,7 @@ import com.google.common.primitives.Ints;
 
 import org.apache.cassandra.io.util.FileDataInput;
 import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.utils.ObjectSizes;
 
 /**
@@ -38,7 +39,7 @@ import org.apache.cassandra.utils.ObjectSizes;
 public class OnHeapIndexedEntry implements IndexedEntry
 {
     private static final long BASE_SIZE =
-    ObjectSizes.measure(new OnHeapIndexedEntry(0, DeletionTime.LIVE, 0, Arrays.<IndexInfo>asList(null, null), null))
+    ObjectSizes.measure(new OnHeapIndexedEntry(0, DeletionTime.LIVE, 0, Arrays.<IndexInfo>asList(null, null), null, null))
     + ObjectSizes.measure(new ArrayList<>(1));
 
     private final long position;
@@ -46,12 +47,14 @@ public class OnHeapIndexedEntry implements IndexedEntry
     private final List<IndexInfo> columnsIndex;
     private final DeletionTime deletionTime;
     private final FileDataInput reader;
+    private final TableMetadata tableMetadata;
 
     private int lastDeserializedBlock = -1;
     private int lastBlockToIterateTo = -1;
     private boolean iteratorDirectionReversed = false;
 
-    public OnHeapIndexedEntry(long position, DeletionTime deletionTime, long headerLength, List<IndexInfo> columnsIndex, FileDataInput reader)
+    public OnHeapIndexedEntry(long position, DeletionTime deletionTime, long headerLength, List<IndexInfo> columnsIndex,
+                              FileDataInput reader, TableMetadata tableMetadata)
     {
         assert deletionTime != null;
         assert columnsIndex != null && columnsIndex.size() > 1;
@@ -62,6 +65,7 @@ public class OnHeapIndexedEntry implements IndexedEntry
         this.columnsIndex = columnsIndex;
         this.reader = reader;
         this.lastBlockToIterateTo = columnsIndex.size();
+        this.tableMetadata = tableMetadata;
     }
 
     public long getPosition()
@@ -94,9 +98,9 @@ public class OnHeapIndexedEntry implements IndexedEntry
         return columnsIndex.size();
     }
 
-    public IndexInfo getIndexInfo(ClusteringPrefix name, ClusteringComparator comparator, boolean reversed) throws IOException
+    public IndexInfo getIndexInfo(ClusteringPrefix name, boolean reversed) throws IOException
     {
-        int indexIdx = indexFor(name, comparator);
+        int indexIdx = indexFor(name);
         if (indexIdx < 0 || indexIdx >= columnsIndex.size())
         {
             // no index block for that slice
@@ -161,7 +165,7 @@ public class OnHeapIndexedEntry implements IndexedEntry
                                                                        "%d <--> %d", idx, -1, columnsIndex.size());
     }
 
-    public void setIteratorBounds(ClusteringBound start, ClusteringBound end, ClusteringComparator comparator, boolean reversed) throws IOException
+    public void setIteratorBounds(ClusteringBound start, ClusteringBound end, boolean reversed) throws IOException
     {
         iteratorDirectionReversed = reversed;
 
@@ -176,7 +180,7 @@ public class OnHeapIndexedEntry implements IndexedEntry
         }
         else
         {
-            nextStartIdx = indexFor(start, comparator);
+            nextStartIdx = indexFor(start);
             nextStartIdx = (reversed) ? nextStartIdx + 1 : nextStartIdx - 1;
         }
 
@@ -194,7 +198,7 @@ public class OnHeapIndexedEntry implements IndexedEntry
         }
         else
         {
-            lastBlockIdx = indexFor(end, comparator);
+            lastBlockIdx = indexFor(end);
             if (lastBlockIdx >= 0 && lastBlockIdx < entryCount())
                 lastBlockIdx = (reversed) ? lastBlockIdx - 1 : lastBlockIdx + 1;
         }
@@ -255,7 +259,7 @@ public class OnHeapIndexedEntry implements IndexedEntry
                + ObjectSizes.sizeOfReferenceArray(columnsIndex.size());
     }
 
-    private int indexFor(ClusteringPrefix name, ClusteringComparator comparator) throws IOException
+    private int indexFor(ClusteringPrefix name) throws IOException
     {
         IndexInfo target = new IndexInfo(name, name, 0, 0, null);
         /*
@@ -289,7 +293,7 @@ public class OnHeapIndexedEntry implements IndexedEntry
             }
         }
 
-        int index = binarySearch(target, comparator.indexComparator(iteratorDirectionReversed), startIdx, endIdx);
+        int index = binarySearch(target, tableMetadata.comparator.indexComparator(iteratorDirectionReversed), startIdx, endIdx);
         return (index < 0 ? -index - (iteratorDirectionReversed ? 2 : 1) : index);
     }
 

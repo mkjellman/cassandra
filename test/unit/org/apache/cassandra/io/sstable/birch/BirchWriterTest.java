@@ -79,13 +79,13 @@ public class BirchWriterTest extends SchemaLoader
         SchemaLoader.prepareServer();
         SchemaLoader.createKeyspace(KEYSPACE,
                                     KeyspaceParams.simple(1),
-                                    SchemaLoader.standardCFMD(KEYSPACE, CF, 1, TimeUUIDType.instance, TimeUUIDType.instance));
+                                    SchemaLoader.standardCFMD(KEYSPACE, CF, 1, TimeUUIDType.instance, TimeUUIDType.instance, TimeUUIDType.instance));
 
         //maxValueSize = DatabaseDescriptor.getMaxValueSize();
         DatabaseDescriptor.setMaxValueSize(1024 * 1024); // set max value size to 1MB
     }
 
-    @Test
+    @Test(timeout = 30000)
     public void wickedLargeTreeWithoutOverflow() throws IOException
     {
         Keyspace keyspace = Keyspace.open(KEYSPACE);
@@ -108,7 +108,7 @@ public class BirchWriterTest extends SchemaLoader
         Assert.assertTrue(tmpFile.delete());
     }
 
-    @Test
+    @Test(timeout = 30000)
     public void multipleWickedLargeTreesWithoutOverflow() throws IOException
     {
         Keyspace keyspace = Keyspace.open(KEYSPACE);
@@ -152,7 +152,7 @@ public class BirchWriterTest extends SchemaLoader
         Assert.assertTrue(tmpFile.delete());
     }
 
-    @Test
+    @Test(timeout = 30000)
     public void wickedLargeTreeWithOverflow() throws Exception
     {
         Keyspace keyspace = Keyspace.open(KEYSPACE);
@@ -179,14 +179,19 @@ public class BirchWriterTest extends SchemaLoader
         try (PageAlignedReader reader = PageAlignedReader.open(tmpFile))
         {
             reader.setSegment(0);
-            SerializationHeader serializationHeader = new SerializationHeader(true, cfs.metadata(), cfs.metadata().regularAndStaticColumns(), EncodingStats.NO_STATS);
-            BirchReader<IndexInfo> birchReader = new BirchReader<>(reader, serializationHeader, CURRENT_VERSION);
-            Assert.assertEquals(85000, birchReader.getElementCount());
-
-            for (IndexInfo sample : samples)
+            SerializationHeader serializationHeader = new SerializationHeader(true, cfs.metadata(),
+                                                                              cfs.metadata().regularAndStaticColumns(),
+                                                                              EncodingStats.NO_STATS);
+            try (BirchReader<IndexInfo> birchReader = new BirchReader<>(reader, serializationHeader, CURRENT_VERSION))
             {
-                IndexInfo indexInfo = birchReader.search(sample.getFirstName(), cfs.getComparator(), false);
-                Assert.assertEquals(sample.getOffset(), indexInfo.getOffset());
+                Assert.assertEquals(85000, birchReader.getElementCount());
+
+                for (IndexInfo sample : samples)
+                {
+                    logger.info("looking for {}", sample.getFirstName().toString(cfs.metadata.get()));
+                    IndexInfo indexInfo = birchReader.search(sample.getFirstName(), cfs.metadata.get(), false);
+                    Assert.assertEquals(sample.getOffset(), indexInfo.getOffset());
+                }
             }
         }
 
@@ -231,7 +236,7 @@ public class BirchWriterTest extends SchemaLoader
             SerializationHeader serializationHeader = new SerializationHeader(true, cfs.metadata(), cfs.metadata().regularAndStaticColumns(), EncodingStats.NO_STATS);
             BirchReader<IndexInfo> birchReader = new BirchReader<>(reader, serializationHeader, CURRENT_VERSION);
             Assert.assertEquals(10000, birchReader.getElementCount());
-            IndexInfo res = birchReader.search(samples.get(3).getFirstName(), cfs.getComparator(), false);
+            IndexInfo res = birchReader.search(samples.get(3).getFirstName(), cfs.metadata.get(), false);
             Assert.assertTrue(cfs.getComparator().compare(res.getFirstName(), samples.get(3).getFirstName()) == 0);
         }
 
@@ -275,7 +280,7 @@ public class BirchWriterTest extends SchemaLoader
 
             SerializationHeader serializationHeader = new SerializationHeader(true, cfs.metadata(), cfs.metadata().regularAndStaticColumns(), EncodingStats.NO_STATS);
             BirchReader<IndexInfo> birchReader = new BirchReader<>(reader, serializationHeader, CURRENT_VERSION);
-            Iterator<IndexInfo> iterator = birchReader.getIterator(cfs.getComparator(), false);
+            Iterator<IndexInfo> iterator = birchReader.getIterator(cfs.metadata.get(), false);
             int iteratorCount = 0;
             while (iterator.hasNext())
             {
@@ -334,7 +339,7 @@ public class BirchWriterTest extends SchemaLoader
             BirchReader birchReader = new BirchReader(reader, serializationHeader, CURRENT_VERSION);
             Assert.assertEquals(generatedIteratorBaseSize, expected.size());
             ListIterator<IndexInfo> expectedIterator = expected.listIterator(expected.size());
-            Iterator<IndexInfo> iterator = birchReader.getIterator(cfs.getComparator(), true);
+            Iterator<IndexInfo> iterator = birchReader.getIterator(cfs.metadata.get(), true);
             int iteratorCount = 0;
             while (iterator.hasNext())
             {
@@ -354,7 +359,7 @@ public class BirchWriterTest extends SchemaLoader
         Assert.assertTrue(tmpFile.delete());
     }
 
-    @Test
+    @Test(timeout = 60000)
     public void absolutelyWickedMassiveTree() throws IOException
     {
         Keyspace keyspace = Keyspace.open(KEYSPACE);
@@ -384,7 +389,7 @@ public class BirchWriterTest extends SchemaLoader
             List<IndexInfo> samples = ((TimeUUIDTreeSerializableIterator) timeUUIDIterator).getSamples();
             for (IndexInfo sample : samples)
             {
-                IndexInfo indexInfo = birchReader.search(sample.getFirstName(), cfs.getComparator(), false);
+                IndexInfo indexInfo = birchReader.search(sample.getFirstName(), cfs.metadata.get(), false);
                 /*
                 logger.debug("birchWriter returned {}:{}:{}.... looking for {}:{}:{}",
                              TimeUUIDType.instance.getString(indexInfo.getFirstName()), indexInfo.getOffset(), indexInfo.getWidth(),
@@ -467,7 +472,7 @@ public class BirchWriterTest extends SchemaLoader
     }
     */
 
-    @Test
+    @Test(timeout = 30000)
     public void simpleTreeIterateStartingFromSearchOffset() throws IOException
     {
         Keyspace keyspace = Keyspace.open(KEYSPACE);
@@ -505,7 +510,7 @@ public class BirchWriterTest extends SchemaLoader
             BirchReader birchReader = new BirchReader(reader, serializationHeader, CURRENT_VERSION);
             Assert.assertEquals(50000, birchReader.getElementCount());
             List<IndexInfo> samples = ((TimeUUIDTreeSerializableIterator) timeUUIDIterator).getSamples();
-            Iterator<IndexInfo> iterator = birchReader.getIterator(samples.get(1).getFirstName(), cfs.getComparator(), false);
+            Iterator<IndexInfo> iterator = birchReader.getIterator(samples.get(1).getFirstName(), null, cfs.metadata.get(), false);
             int iteratorCount = 0;
             while (iterator.hasNext())
             {

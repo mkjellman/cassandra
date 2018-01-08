@@ -439,8 +439,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
                                              header.toHeader(metadata.get()));
 
         try(FileHandle.Builder ibuilder = new FileHandle.Builder(sstable.descriptor.filenameFor(Component.PRIMARY_INDEX))
-                                                     .mmapped(DatabaseDescriptor.getIndexAccessMode() == Config.DiskAccessMode.mmap
-                                                              && !sstable.descriptor.version.hasBirchIndexes())
+                                                     .mmapped(!sstable.descriptor.version.hasBirchIndexes())
                                                      .pageAligned(sstable.descriptor.version.hasBirchIndexes());
                                                      //.withChunkCache(ChunkCache.instance);
             FileHandle.Builder dbuilder = new FileHandle.Builder(sstable.descriptor.filenameFor(Component.DATA)).compressed(sstable.compression)
@@ -759,8 +758,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
     private void load(boolean recreateBloomFilter, boolean saveSummaryIfCreated) throws IOException
     {
         try(FileHandle.Builder ibuilder = new FileHandle.Builder(descriptor.filenameFor(Component.PRIMARY_INDEX))
-                                                     .mmapped(DatabaseDescriptor.getIndexAccessMode() == Config.DiskAccessMode.mmap
-                                                              && !descriptor.version.hasBirchIndexes());
+                                                     .mmapped(!descriptor.version.hasBirchIndexes());
                                                      //.withChunkCache(ChunkCache.instance);
             FileHandle.Builder dbuilder = new FileHandle.Builder(descriptor.filenameFor(Component.DATA)).compressed(compression)
                                                      .mmapped(DatabaseDescriptor.getDiskAccessMode() == Config.DiskAccessMode.mmap)
@@ -1810,8 +1808,9 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
 
     public DecoratedKey keyAt(long indexPosition) throws IOException
     {
+        logger.info("keyAt called for indexPosition {} for index file: {}", indexPosition, ifile.path());
         DecoratedKey key;
-        try (FileDataInput in = ifile.createReader(indexPosition))
+        try (FileDataInput in =  ifile.createPageAlignedReader(indexPosition))
         {
             if (in.isEOF())
                 return null;
@@ -2032,16 +2031,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
         {
             try
             {
-                if (descriptor.version.hasBirchIndexes())
-                {
-                    FileDataInput reader = ifile.createPageAlignedReader(0);
-                    ((PageAlignedReader) reader).setSegment(0);
-                    return reader;
-                }
-                else
-                {
-                    return ifile.createReader();
-                }
+                return (descriptor.version.hasBirchIndexes()) ? ifile.createPageAlignedReader(0) : ifile.createReader();
             }
             catch (IOException e)
             {
@@ -2057,6 +2047,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
         return dfile.channel;
     }
 
+    // kjkj: unused method
     public ChannelProxy getIndexChannel()
     {
         return ifile.channel;

@@ -234,7 +234,7 @@ public class SSTableIterator extends AbstractSSTableIterator
             }
 
             // Find and set the iterator to start and finish for the blocks involved to be read the slice.
-            indexedEntry.setIteratorBounds(slice.start(), slice.end(), metadata.comparator, false);
+            indexedEntry.setIteratorBounds(slice.start(), slice.end(),false);
             if (!indexedEntry.hasNext())
             {
                 sliceDone = true;

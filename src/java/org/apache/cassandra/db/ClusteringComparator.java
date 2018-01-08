@@ -56,7 +56,7 @@ public class ClusteringComparator implements Comparator<Clusterable>
         // copy the list to ensure despatch is monomorphic
         this.clusteringTypes = ImmutableList.copyOf(clusteringTypes);
 
-        this.indexComparator = (o1, o2) -> ClusteringComparator.this.compare(o1.getLastName(), o2.getLastName());
+        this.indexComparator = (o1, o2) -> ClusteringComparator.this.compare(o1.getFirstName(), o2.getFirstName());
         this.indexReverseComparator = (o1, o2) -> ClusteringComparator.this.compare(o1.getFirstName(), o2.getFirstName());
         this.reverseComparator = (c1, c2) -> ClusteringComparator.this.compare(c2, c1);
         for (AbstractType<?> type : clusteringTypes)
@@ -136,6 +136,25 @@ public class ClusteringComparator implements Comparator<Clusterable>
 
         if (s1 == s2)
             return ClusteringPrefix.Kind.compare(c1.kind(), c2.kind());
+
+        return s1 < s2 ? c1.kind().comparedToClustering : -c2.kind().comparedToClustering;
+    }
+
+    public int compareExcludingKind(ClusteringPrefix c1, ClusteringPrefix c2)
+    {
+        int s1 = c1.size();
+        int s2 = c2.size();
+        int minSize = Math.min(s1, s2);
+
+        for (int i = 0; i < minSize; i++)
+        {
+            int cmp = compareComponent(i, c1.get(i), c2.get(i));
+            if (cmp != 0)
+                return cmp;
+        }
+
+        if (s1 == s2)
+            return 0;
 
         return s1 < s2 ? c1.kind().comparedToClustering : -c2.kind().comparedToClustering;
     }

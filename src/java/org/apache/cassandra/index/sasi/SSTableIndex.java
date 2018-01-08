@@ -39,9 +39,13 @@ import org.apache.cassandra.utils.concurrent.Ref;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
 
 import com.google.common.base.Function;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class SSTableIndex
 {
+    private static final Logger logger = LoggerFactory.getLogger(SSTableIndex.class);
+
     private final ColumnIndex columnIndex;
     private final Ref<SSTableReader> sstableRef;
     private final SSTableReader sstable;
@@ -59,6 +63,8 @@ public class SSTableIndex
             throw new IllegalStateException("Couldn't acquire reference to the sstable: " + referent);
 
         AbstractType<?> validator = columnIndex.getValidator();
+
+        logger.info("in SSTableIndex constructor for indexFile {}", indexFile);
 
         assert validator != null;
         assert indexFile.exists() : String.format("SSTable %s should have index %s.",

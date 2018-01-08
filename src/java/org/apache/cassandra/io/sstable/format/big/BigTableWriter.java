@@ -172,7 +172,7 @@ public class BigTableWriter extends SSTableWriter
         {
             ColumnIndex index = ColumnIndex.writeAndBuildIndex(collecting, dataFile, header, observers, descriptor.version);
 
-            IndexedEntry entry = IndexedEntryFactory.create(startPosition, collecting.partitionLevelDeletion(), index);
+            IndexedEntry entry = IndexedEntryFactory.create(startPosition, collecting.partitionLevelDeletion(), index, metadata.get());
 
             long endPosition = dataFile.position();
             long rowSize = endPosition - startPosition;
@@ -428,8 +428,7 @@ public class BigTableWriter extends SSTableWriter
         {
             indexFile = PageAlignedWriter.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)));
             builder = new FileHandle.Builder(descriptor.filenameFor(Component.PRIMARY_INDEX))
-                      .mmapped(DatabaseDescriptor.getIndexAccessMode() == Config.DiskAccessMode.mmap
-                               && !descriptor.version.hasBirchIndexes())
+                      .mmapped(!descriptor.version.hasBirchIndexes())
                       .pageAligned(descriptor.version.hasBirchIndexes());
             //chunkCache.ifPresent(builder::withChunkCache); // kjkj todo
             summary = new IndexSummaryBuilder(keyCount, metadata().params.minIndexInterval, Downsampling.BASE_SAMPLING_LEVEL);
@@ -505,7 +504,7 @@ public class BigTableWriter extends SSTableWriter
             // we can't un-set the bloom filter addition, but extra keys in there are harmless.
             // we can't reset dbuilder either, but that is the last thing called in afterappend so
             // we assume that if that worked then we won't be trying to reset.
-            //indexFile.resetAndTruncate(mark); //kjkj only used for early open -- so remove?
+            //\indexFile.resetAndTruncate(mark); //kjkj only used for early open -- so remove?
         }
 
         protected void doPrepare()
