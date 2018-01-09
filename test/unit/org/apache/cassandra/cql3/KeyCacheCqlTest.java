@@ -248,7 +248,7 @@ public class KeyCacheCqlTest extends CQLTester
         metrics = CacheService.instance.keyCache.getMetrics();
         hits = metrics.hits.getCount();
         requests = metrics.requests.getCount();
-        assertEquals(200, hits);
+        assertEquals(0, hits);
         assertEquals(420, requests);
 
         CacheService.instance.keyCache.submitWrite(Integer.MAX_VALUE).get();
@@ -322,7 +322,7 @@ public class KeyCacheCqlTest extends CQLTester
         metrics = CacheService.instance.keyCache.getMetrics();
         hits = metrics.hits.getCount();
         requests = metrics.requests.getCount();
-        assertEquals(200, hits);
+        assertEquals(0, hits);
         assertEquals(420, requests);
 
         dropTable("DROP TABLE %s");
@@ -411,7 +411,7 @@ public class KeyCacheCqlTest extends CQLTester
         metrics = CacheService.instance.keyCache.getMetrics();
         hits = metrics.hits.getCount();
         requests = metrics.requests.getCount();
-        assertEquals(10, hits);
+        assertEquals(0, hits);
         assertEquals(10 + 10, requests);
 
         // 100 queries - must get a hit in key-cache
@@ -427,7 +427,7 @@ public class KeyCacheCqlTest extends CQLTester
         metrics = CacheService.instance.keyCache.getMetrics();
         hits = metrics.hits.getCount();
         requests = metrics.requests.getCount();
-        assertEquals(10 + 100, hits);
+        assertEquals(0, hits);
         assertEquals(20 + 100, requests);
 
         // 5000 queries - first 10 partitions already in key cache
@@ -442,7 +442,7 @@ public class KeyCacheCqlTest extends CQLTester
 
         hits = metrics.hits.getCount();
         requests = metrics.requests.getCount();
-        assertEquals(110 + 4910, hits);
+        assertEquals(0, hits);
         assertEquals(120 + 5500, requests);
     }
 

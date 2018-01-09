@@ -176,7 +176,7 @@ public class BirchIndexedEntry implements IndexedEntry, AutoCloseable
     {
         assert reader.getCurrentSegmentIdx() == readerSegmentIdx;
 
-        logger.info("setIteratorBounds start: {} end: {}", start.toString(tableMetadata), end.toString(tableMetadata));
+        logger.debug("setIteratorBounds start: {} end: {}", start.toString(tableMetadata), end.toString(tableMetadata));
 
         iteratorDirectionReversed = reversed;
         iterator = birchReader.getIterator(start, end, tableMetadata, reversed);
@@ -203,9 +203,9 @@ public class BirchIndexedEntry implements IndexedEntry, AutoCloseable
     public void close()
     {
         // BootStrapperTest shows access after close due to a close stack from here...
-        logger.info("BirchIndexedEntry#close()");
-        //FileUtils.closeQuietly(birchReader);
-        //FileUtils.closeQuietly(reader);
+        logger.debug("BirchIndexedEntry#close()");
+        FileUtils.closeQuietly(birchReader);
+        FileUtils.closeQuietly(reader);
     }
 
     public void reset(boolean reversed)

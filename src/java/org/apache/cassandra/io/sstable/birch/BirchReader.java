@@ -311,7 +311,7 @@ public class BirchReader<T> implements AutoCloseable
 
         short entries = reader.readShort();
 
-        logger.info("comparator is {}", tableMetadata.comparator);
+        logger.debug("comparator is {}", tableMetadata.comparator);
         for (int i = 0; i < entries; i++) {
             reader.reset(nodeStartingMark); // tmp kjkj for above debug logging..
             T elm = getElement(i, tableMetadata.comparator);
@@ -343,7 +343,7 @@ public class BirchReader<T> implements AutoCloseable
 
         int index = binarySearch(searchKey, tableMetadata, nodeStartingMark, startIdx, endIdx, reversed);
         int indexRet = (index < 0) ? -index - (reversed ? 1 : 1) : index ;
-        logger.info("binarySearch ret was {} indexRet: {}", index, indexRet);
+        logger.debug("binarySearch ret was {} indexRet: {}", index, indexRet);
         //int indexRet = index;
         //if (indexRet < 0 || indexRet >= entries)
         //{
@@ -463,7 +463,7 @@ public class BirchReader<T> implements AutoCloseable
             else
                 return mid; // key found
         }
-        logger.info("key not found: low: {} calc: {} calc2: {}", low, -(low - 1), -(low - 2));
+        logger.debug("key not found: low: {} calc: {} calc2: {}", low, -(low - 1), -(low - 2));
         //return -(low - 1); // key not found
         return -low; // key not found
     }
@@ -672,10 +672,10 @@ public class BirchReader<T> implements AutoCloseable
 
                 while (offset >= descriptor.getFirstNodeOffset())
                 {
-                    logger.info("while offset >= descriptor.getFirstNodeOffset()... {} >= {}", offset, descriptor.getFirstNodeOffset());
+                    logger.debug("while offset >= descriptor.getFirstNodeOffset()... {} >= {}", offset, descriptor.getFirstNodeOffset());
                     reader.seek(offset);
                     offset = binarySearchNode(startSearchKey, tableMetadata, reversed);
-                    logger.info("in while loop binarySearchNode returned offset {}", offset);
+                    logger.debug("in while loop binarySearchNode returned offset {}", offset);
                 }
 
                 if (offset >= 0)
@@ -683,7 +683,7 @@ public class BirchReader<T> implements AutoCloseable
                     // we found something in the binary search and can now figure out where our start will be!
                     //this.startPage = (int) (offset / descriptor.getAlignedPageSize());
                     this.startPage = (int) (offset - descriptor.getFirstLeafOffset()) / descriptor.getAlignedPageSize();
-                    logger.info("found a valid start offset {}... setting startPage to {}", offset, this.startPage);
+                    logger.debug("found a valid start offset {}... setting startPage to {}", offset, this.startPage);
                     this.currentPage = this.startPage;
 
                     // now, go to that leaf...
