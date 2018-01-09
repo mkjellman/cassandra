@@ -319,13 +319,13 @@ public class BirchReader<T> implements AutoCloseable
             ClusteringPrefix keyClustering = ClusteringPrefix.serializer.deserialize(key,
                                                                                     version.correspondingMessagingVersion(),
                                                                                     header.clusteringTypes());
-            logger.info("entries [{} of {}] in leaf ==> {}", i, entries, keyClustering.toString(tableMetadata));
+            logger.debug("entries [{} of {}] in leaf ==> {}", i, entries, keyClustering.toString(tableMetadata));
             reader.reset(nodeStartingMark); // tmp kjkj for above debug logging..
         }
 
         int startIdx = 0;
         int endIdx = entries - 1;
-        logger.info("binarySearchLeaf ==> entries: {} startIdx: {} endIdx: {} reversed: {}", entries, startIdx, endIdx, reversed);
+        logger.debug("binarySearchLeaf ==> entries: {} startIdx: {} endIdx: {} reversed: {}", entries, startIdx, endIdx, reversed);
 
         if (searchKey.dataSize() == 0)
         {
@@ -464,7 +464,8 @@ public class BirchReader<T> implements AutoCloseable
                 return mid; // key found
         }
         logger.info("key not found: low: {} calc: {} calc2: {}", low, -(low - 1), -(low - 2));
-        return -(low - 1); // key not found
+        //return -(low - 1); // key not found
+        return -low; // key not found
     }
 
     /**
@@ -516,7 +517,7 @@ public class BirchReader<T> implements AutoCloseable
         int end = entries - 1; // binary search is zero-indexed
         int middle = (start + end) / 2;
 
-        logger.info("binarySearchNode ==> start: {} end: {} middle: {}", start, end, middle);
+        logger.debug("binarySearchNode ==> start: {} end: {} middle: {}", start, end, middle);
 
         while (start <= end)
         {
@@ -702,10 +703,10 @@ public class BirchReader<T> implements AutoCloseable
 
                 while (offset >= descriptor.getFirstNodeOffset())
                 {
-                    logger.info("while offset >= descriptor.getFirstNodeOffset()... {} >= {}", offset, descriptor.getFirstNodeOffset());
+                    logger.debug("while offset >= descriptor.getFirstNodeOffset()... {} >= {}", offset, descriptor.getFirstNodeOffset());
                     reader.seek(offset);
                     offset = binarySearchNode(endSearchKey, tableMetadata, reversed);
-                    logger.info("in while loop binarySearchNode returned offset {}", offset);
+                    logger.debug("in while loop binarySearchNode returned offset {}", offset);
                 }
 
                 if (offset >= 0)

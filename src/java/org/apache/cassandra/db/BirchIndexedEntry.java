@@ -202,9 +202,10 @@ public class BirchIndexedEntry implements IndexedEntry, AutoCloseable
     @Override
     public void close()
     {
+        // BootStrapperTest shows access after close due to a close stack from here...
         logger.info("BirchIndexedEntry#close()");
-        FileUtils.closeQuietly(birchReader);
-        FileUtils.closeQuietly(reader);
+        //FileUtils.closeQuietly(birchReader);
+        //FileUtils.closeQuietly(reader);
     }
 
     public void reset(boolean reversed)

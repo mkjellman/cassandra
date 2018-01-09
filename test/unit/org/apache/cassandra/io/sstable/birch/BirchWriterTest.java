@@ -359,7 +359,7 @@ public class BirchWriterTest extends SchemaLoader
         Assert.assertTrue(tmpFile.delete());
     }
 
-    @Test(timeout = 60000)
+    @Test(timeout = 1200000)
     public void absolutelyWickedMassiveTree() throws IOException
     {
         Keyspace keyspace = Keyspace.open(KEYSPACE);
