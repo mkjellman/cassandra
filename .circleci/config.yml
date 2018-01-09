@@ -169,7 +169,7 @@ jobs:
             export PATH=$PATH:$ANT_HOME/bin:$JAVA_HOME/bin
 
             cd ~/cassandra
-            ant testclasslist -Dtest.classlistfile=/tmp/java_tests_${CIRCLE_NODE_INDEX}_final.txt || true
+            ant testclasslist -Dtest.classlistfile=/tmp/java_tests_${CIRCLE_NODE_INDEX}_final.txt
          no_output_timeout: 15m
       - store_test_results:
             path: ~/cassandra/build/test/output/
