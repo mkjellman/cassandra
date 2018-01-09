@@ -71,7 +71,7 @@
       <includeCallerData>true</includeCallerData>
   </appender>
 
-  <root level="DEBUG">
+  <root level="INFO">
     <appender-ref ref="ASYNC" />
   </root>
 </configuration>
