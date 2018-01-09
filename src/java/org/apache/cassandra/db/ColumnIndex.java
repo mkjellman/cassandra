@@ -126,7 +126,7 @@ public class ColumnIndex
         {
             writePartitionHeader(iterator);
             this.headerLength = writer.position() - initialPosition;
-            logger.info("ColumnIndex build() headerLength: {} writer.position(): {} initialPosition: {}", headerLength, writer.position(), initialPosition);
+            logger.debug("ColumnIndex build() headerLength: {} writer.position(): {} initialPosition: {}", headerLength, writer.position(), initialPosition);
 
             while (iterator.hasNext())
                 add(iterator.next());

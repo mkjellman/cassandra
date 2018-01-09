@@ -393,7 +393,7 @@ public class PageAlignedWriter implements DataOutput, WritableByteChannel
         int currentRelativeOffsetToSerializedSegments = 0;
         for (AlignedSegment segment : finishedSegments)
         {
-            logger.info("AlignedSegment: [{}]", segment.toString());
+            logger.debug("AlignedSegment: [{}]", segment.toString());
 
             // for each segment, skip forwards by the fixed overhead (number of elements,
             // relative starting offset the segments will be serialized at, max segment offset)

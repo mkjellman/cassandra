@@ -56,7 +56,7 @@ public class BirchIndexedEntry implements IndexedEntry, AutoCloseable
     public BirchIndexedEntry(long position, TableMetadata tableMetadata, SerializationHeader header, Version version,
                              PageAlignedReader reader, long headerLength, DeletionTime deletionTime) throws IOException
     {
-        logger.info("new BirchIndexedEntry created! for position: {}", position);
+        logger.debug("new BirchIndexedEntry created! for position: {}", position);
         this.position = position;
         this.tableMetadata = tableMetadata;
         this.header = header;
