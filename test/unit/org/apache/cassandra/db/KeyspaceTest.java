@@ -202,16 +202,14 @@ public class KeyspaceTest extends CQLTester
             if (round == 0)
                 cfs.forceBlockingFlush();
 
-            //assertRowsInSlice(cfs, "0", 96, 99, 4, false, prefix);
-            //assertRowsInSlice(cfs, "0", 96, 99, 4, true, prefix);
+            assertRowsInSlice(cfs, "0", 96, 99, 4, false, prefix);
+            assertRowsInSlice(cfs, "0", 96, 99, 4, true, prefix);
 
-            //assertRowsInSlice(cfs, "0", 100, 103, 4, false, prefix);
-            //assertRowsInSlice(cfs, "0", 100, 103, 4, true, prefix);
+            assertRowsInSlice(cfs, "0", 100, 103, 4, false, prefix);
+            assertRowsInSlice(cfs, "0", 100, 103, 4, true, prefix);
 
             assertRowsInSlice(cfs, "0", 0, 99, 100, false, prefix);
             assertRowsInSlice(cfs, "0", 288, 299, 12, true, prefix);
-
-
         }
     }
 

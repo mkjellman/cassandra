@@ -342,7 +342,7 @@ public class BirchReader<T> implements AutoCloseable
         }
 
         int index = binarySearch(searchKey, tableMetadata, nodeStartingMark, startIdx, endIdx, reversed);
-        int indexRet = (index < 0) ? -index - (reversed ? 0 : 1) : index ;
+        int indexRet = (index < 0) ? -index - (reversed ? 1 : 1) : index ;
         logger.info("binarySearch ret was {} indexRet: {}", index, indexRet);
         //int indexRet = index;
         //if (indexRet < 0 || indexRet >= entries)
