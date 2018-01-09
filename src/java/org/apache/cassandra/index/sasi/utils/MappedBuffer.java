@@ -179,11 +179,11 @@ public class MappedBuffer implements Closeable
         if (isPageAligned(pos, 4))
         {
             try {
-                logger.info("going to get mmaped page {} of {} for pos {}", getPage(pos), pages.length, pos);
+                logger.debug("going to get mmaped page {} of {} for pos {}", getPage(pos), pages.length, pos);
                 MappedByteBuffer buf = pages[getPage(pos)];
-                logger.info("going to getInt for position {} (from {} pos)", getPageOffset(pos), pos);
+                logger.debug("going to getInt for position {} (from {} pos)", getPageOffset(pos), pos);
                 int intRet = buf.getInt(getPageOffset(pos));
-                logger.info("intRet is {}", intRet);
+                logger.debug("intRet is {}", intRet);
             } catch (Throwable t) {
                 logger.error("kj321 getInt for pos {} failed", pos, t);
             }
@@ -211,11 +211,11 @@ public class MappedBuffer implements Closeable
         // fast path if the long could be retrieved from a single page
         // that would avoid multiple expensive look-ups into page array.
         try {
-            logger.info("going to get buf at idx {} of {}", getPage(pos), pages.length);
+            logger.debug("going to get buf at idx {} of {}", getPage(pos), pages.length);
             MappedByteBuffer buf = pages[getPage(pos)];
-            logger.info("going to call getLong for pageOffset {} (for pos {})", getPageOffset(pos), pos);
+            logger.debug("going to call getLong for pageOffset {} (for pos {})", getPageOffset(pos), pos);
             long retLong = buf.getLong(getPageOffset(pos));
-            logger.info("retLong was {}", retLong);
+            logger.debug("retLong was {}", retLong);
         } catch (Throwable t) {
             logger.error("failed kj123", t);
             return 0;
