@@ -18,6 +18,7 @@
 
 package org.apache.cassandra.schema;
 
+import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.Collection;
 
@@ -27,9 +28,17 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.schema.sr.AlwaysSpeculativeRetryPolicy;
+import org.apache.cassandra.schema.sr.FixedSpeculativeRetryPolicy;
+import org.apache.cassandra.schema.sr.HybridSpeculativeRetryPolicy;
+import org.apache.cassandra.schema.sr.NeverSpeculativeRetryPolicy;
+import org.apache.cassandra.schema.sr.PercentileSpeculativeRetryPolicy;
+import org.apache.cassandra.schema.sr.SpeculativeRetryPolicy;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.runners.Parameterized.Parameters;
+
+import static org.apache.cassandra.schema.sr.HybridSpeculativeRetryPolicy.Function;
 
 @RunWith(Enclosed.class)
 public class SpeculativeRetryParamParseTest
@@ -39,9 +48,9 @@ public class SpeculativeRetryParamParseTest
     public static class SuccessfulParseTest
     {
         private final String string;
-        private final SpeculativeRetryParam expectedValue;
+        private final SpeculativeRetryPolicy expectedValue;
 
-        public SuccessfulParseTest(String string, SpeculativeRetryParam expectedValue)
+        public SuccessfulParseTest(String string, SpeculativeRetryPolicy expectedValue)
         {
             this.string = string;
             this.expectedValue = expectedValue;
@@ -51,15 +60,29 @@ public class SpeculativeRetryParamParseTest
         public static Collection<Object[]> generateData()
         {
             return Arrays.asList(new Object[][]{
-                                 { "NONE", SpeculativeRetryParam.none() },
-                                 { "ALWAYS", SpeculativeRetryParam.always() },
-                                 { "10PERCENTILE", SpeculativeRetryParam.percentile(10.0) },
-                                 { "121.1ms", SpeculativeRetryParam.custom(121.1) },
-                                 { "21.7MS", SpeculativeRetryParam.custom(21.7) },
-                                 { "None", SpeculativeRetryParam.none() },
-                                 { "Always", SpeculativeRetryParam.always() },
-                                 { "21.1percentile", SpeculativeRetryParam.percentile(21.1) },
-                                 { "78.11p", SpeculativeRetryParam.percentile(78.11) }
+                                 { "NONE", NeverSpeculativeRetryPolicy.INSTANCE },
+                                 { "NEVER", NeverSpeculativeRetryPolicy.INSTANCE },
+                                 { "ALWAYS", AlwaysSpeculativeRetryPolicy.INSTANCE },
+                                 { "10PERCENTILE", new PercentileSpeculativeRetryPolicy(new BigDecimal(0.10)) },
+                                 { "121.1ms", new FixedSpeculativeRetryPolicy(121.1) },
+                                 { "21.7MS", new FixedSpeculativeRetryPolicy(21.7) },
+                                 { "None", NeverSpeculativeRetryPolicy.INSTANCE },
+                                 { "Never", NeverSpeculativeRetryPolicy.INSTANCE },
+                                 { "Always", AlwaysSpeculativeRetryPolicy.INSTANCE },
+                                 { "21.1percentile", new PercentileSpeculativeRetryPolicy(new BigDecimal(0.211)) },
+                                 { "78.11p", new PercentileSpeculativeRetryPolicy(new BigDecimal(0.7811)) },
+                                 { "max(99p,53ms)", new HybridSpeculativeRetryPolicy(new PercentileSpeculativeRetryPolicy(new BigDecimal(0.99)),
+                                                                                     new FixedSpeculativeRetryPolicy(53),
+                                                                                     Function.MAX) },
+                                 { "max(53ms,99p)", new HybridSpeculativeRetryPolicy(new PercentileSpeculativeRetryPolicy(new BigDecimal(0.99)),
+                                                                                     new FixedSpeculativeRetryPolicy(53),
+                                                                                     Function.MAX) },
+                                 { "MIN(70MS,90PERCENTILE)", new HybridSpeculativeRetryPolicy(new PercentileSpeculativeRetryPolicy(new BigDecimal(0.90)),
+                                                                                              new FixedSpeculativeRetryPolicy(70),
+                                                                                              Function.MIN) },
+                                 { "MIN(70MS,  90PERCENTILE)", new HybridSpeculativeRetryPolicy(new PercentileSpeculativeRetryPolicy(new BigDecimal(0.90)),
+                                                                                                new FixedSpeculativeRetryPolicy(70),
+                                                                                                Function.MIN) }
                                  }
             );
         }
@@ -67,7 +90,7 @@ public class SpeculativeRetryParamParseTest
         @Test
         public void testParameterParse()
         {
-            assertEquals(expectedValue, SpeculativeRetryParam.fromString(string));
+            assertEquals(expectedValue, SpeculativeRetryPolicy.fromString(string));
         }
     }
 
@@ -98,7 +121,7 @@ public class SpeculativeRetryParamParseTest
         @Test(expected = ConfigurationException.class)
         public void testParameterParse()
         {
-            SpeculativeRetryParam.fromString(string);
+            SpeculativeRetryPolicy.fromString(string);
         }
     }
 }
