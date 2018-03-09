@@ -37,9 +37,9 @@ public interface SpeculativeRetryPolicy
         NEVER, NONE, FIXED, PERCENTILE, HYBRID, ALWAYS
     }
 
-    static final Pattern RETRY_PATTERN = Pattern.compile("(?<function>MIN|MAX|NEVER|NONE|ALWAYS)?\\(?" +
+    static final Pattern RETRY_PATTERN = Pattern.compile("^(?<function>MIN|MAX|NEVER|NONE|ALWAYS)?\\(?" +
                                                          "(?<val1>[0-9.]+)?(?<op1>P|PERCENTILE|MS)?([,\\s]*)" +
-                                                         "(?<val2>[0-9.]+)?(?<op2>P|PERCENTILE|MS)?\\)?",
+                                                         "(?<val2>[0-9.]+)?(?<op2>P|PERCENTILE|MS)?\\)?$",
                                                          Pattern.CASE_INSENSITIVE);
     public static final SpeculativeRetryPolicy DEFAULT = new PercentileSpeculativeRetryPolicy(new BigDecimal(0.99));
 

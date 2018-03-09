@@ -31,7 +31,7 @@ public class PercentileSpeculativeRetryPolicy implements SpeculativeRetryPolicy
 
     public PercentileSpeculativeRetryPolicy(BigDecimal percentile)
     {
-        this.percentile = percentile.setScale(2, RoundingMode.UP);
+        this.percentile = percentile.setScale(2, RoundingMode.HALF_DOWN);
     }
 
     @Override

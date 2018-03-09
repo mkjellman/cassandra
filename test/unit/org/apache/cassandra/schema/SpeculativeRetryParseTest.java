@@ -41,7 +41,7 @@ import static org.junit.runners.Parameterized.Parameters;
 import static org.apache.cassandra.schema.sr.HybridSpeculativeRetryPolicy.Function;
 
 @RunWith(Enclosed.class)
-public class SpeculativeRetryParamParseTest
+public class SpeculativeRetryParseTest
 {
 
     @RunWith(Parameterized.class)
@@ -91,6 +91,12 @@ public class SpeculativeRetryParamParseTest
         public void testParameterParse()
         {
             assertEquals(expectedValue, SpeculativeRetryPolicy.fromString(string));
+        }
+
+        @Test
+        public void testToStringRoundTrip()
+        {
+            assertEquals(expectedValue, SpeculativeRetryPolicy.fromString(expectedValue.toString()));
         }
     }
 

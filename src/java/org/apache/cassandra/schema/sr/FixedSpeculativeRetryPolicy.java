@@ -69,6 +69,6 @@ public class FixedSpeculativeRetryPolicy implements SpeculativeRetryPolicy
     @Override
     public String toString()
     {
-        return String.format("%.2fms", speculateAtMilliseconds);
+        return String.format("%.2fMS", speculateAtMilliseconds);
     }
 }
